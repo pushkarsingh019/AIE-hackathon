@@ -13,6 +13,7 @@ from rich.console import Group
 from rich.panel import Panel
 from rich.style import Style
 from rich.text import Text
+from rich.tree import Tree
 from textual import work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -34,6 +35,9 @@ class PaperQATui(App):
         ("ctrl+c", "quit", "Quit"),
         ("ctrl+r", "reindex", "Reindex"),
         ("o", "open_evidence", "Open PDF"),
+        ("l", "paper_lineage", "Lineage"),
+        ("1", "paper_lineage", "Lineage"),
+        ("d", "download_lineage_paper", "Download Lineage Paper"),
         ("escape", "clear_detail", "Clear Detail"),
     ]
 
@@ -62,6 +66,17 @@ class PaperQATui(App):
         "Scanning for the sharpest supporting sentences...",
         "Summoning evidence from the stack...",
     ]
+
+    WELCOME_ART = r"""
+   ____  ___    ____  __________     ____  ___       ____  ___
+  / __ \/   |  / __ \/ ____/ __ \   / __ \/   |     / __ \/   |
+ / /_/ / /| | / /_/ / __/ / /_/ /  / / / / /| |    / / / / /| |
+/ ____/ ___ |/ ____/ /___/ _, _/  / /_/ / ___ |   / /_/ / ___ |
+/_/   /_/  |_/_/   /_____/_/ |_|   \___\/_/  |_|   \___\/_/  |_|
+
+       local-first paper chaos machine  //  citations or it didn't happen
+       press l/1 for lineage  //  press d after lineage to ingest a paper
+""".strip("\n")
 
     CSS = """
     Screen {
@@ -168,6 +183,8 @@ class PaperQATui(App):
 
         self.active_claim_id: int | None = None
         self.active_reference_paper_id: str | None = None
+        self.active_paper: PaperDocument | None = None
+        self.active_lineage_items: list[dict] = []
         self.active_evidence: PaperCitation | None = None
 
         self.claim_color_map: dict[int, str] = {}
@@ -178,6 +195,8 @@ class PaperQATui(App):
 
         self.waiting = False
         self.wait_started_at = 0.0
+        self.waiting_message = "Thinking"
+        self.show_welcome_art = True
         self.status_message = "Indexing status will appear here. Ask a question below."
         self.indexing = False
         self.watcher_ready = False
@@ -278,6 +297,7 @@ class PaperQATui(App):
             return
 
         event.input.value = ""
+        self.show_welcome_art = False
         self._add_user_message(question)
         self.set_waiting(True)
         self.answer_question(question)
@@ -301,6 +321,53 @@ class PaperQATui(App):
 
     def action_clear_detail(self) -> None:
         self.clear_detail()
+
+    def action_paper_lineage(self) -> None:
+        if self.waiting or self.indexing:
+            return
+        if not self.active_paper:
+            self._set_status("Select a paper in Papers In Project first, then press l for lineage.")
+            return
+        paper = self.active_paper
+        self.show_lineage_loading(paper)
+        self.set_waiting(True, f"Searching Exa lineage for {paper.title}")
+        self.lookup_paper_lineage(paper)
+
+    def action_download_lineage_paper(self) -> None:
+        if self.waiting or self.indexing:
+            return
+        if not self.active_lineage_items:
+            self._set_status("Run lineage first, then press d to download a lineage paper.")
+            return
+        title = str(self.active_lineage_items[0].get("title") or "lineage paper")
+        self.show_download_loading(title)
+        self.set_waiting(True, f"Downloading lineage paper {title}")
+        self.download_lineage_paper(list(self.active_lineage_items))
+
+    @work(thread=True)
+    def download_lineage_paper(self, items: list[dict]) -> None:
+        try:
+            path, source_title = self.qa.download_first_available_lineage_paper(items)
+            papers = self.qa.ensure_index(force=True)
+            self.call_from_thread(self.set_papers, papers)
+            self.call_from_thread(self.set_paper_signature, self.current_paper_signature())
+            self.call_from_thread(self._set_status, f"Downloaded and indexed new paper: {path.name}")
+            self.call_from_thread(self.show_download_complete, path, source_title)
+        except Exception as e:
+            self.call_from_thread(self._set_status, f"Download failed: {e}")
+        finally:
+            self.call_from_thread(self.set_waiting, False)
+
+    @work(thread=True)
+    def lookup_paper_lineage(self, paper: PaperDocument) -> None:
+        try:
+            lineage = self.qa.paper_lineage(paper)
+            self.call_from_thread(self.show_lineage_detail, lineage)
+            self.call_from_thread(self._set_status, f"Lineage saved to {lineage.get('lineage_file', 'papers/')}")
+        except Exception as e:
+            self.call_from_thread(self._set_status, f"Lineage lookup failed: {e}")
+        finally:
+            self.call_from_thread(self.set_waiting, False)
 
     def action_open_evidence(self) -> None:
         if not self.active_reference_paper_id:
@@ -376,6 +443,8 @@ class PaperQATui(App):
     def clear_detail(self) -> None:
         self.active_claim_id = None
         self.active_reference_paper_id = None
+        self.active_paper = None
+        self.active_lineage_items = []
         self.active_evidence = None
         self.claim_color_map = self.claim_color_map if self.claim_color_map else {}
         self.query_one("#chunk-detail-content", Static).update("Select a paper or a reference claim to inspect sentences.")
@@ -410,15 +479,17 @@ class PaperQATui(App):
         self.status_message = message
         self.render_chat()
 
-    def set_waiting(self, waiting: bool) -> None:
+    def set_waiting(self, waiting: bool, message: str = "Thinking") -> None:
         self.waiting = waiting
         if waiting:
             self.wait_started_at = time.time()
+            self.waiting_message = message
             self.query_one("#question-input", Input).disabled = True
-            self._set_status("Waiting for the local model...")
+            self._set_status(f"{message}...")
         else:
             self.query_one("#question-input", Input).disabled = False
             self.wait_started_at = 0.0
+            self.waiting_message = "Thinking"
             self._set_status(self.status_message or "Ready.")
         self.render_chat()
 
@@ -441,10 +512,14 @@ class PaperQATui(App):
         if self.waiting:
             elapsed = time.time() - self.wait_started_at
             pun = self.WAITING_LINES[int(elapsed) % len(self.WAITING_LINES)]
-            waiting_text = Text(f"Thinking for {elapsed:.1f}s...\n{pun}", style=Style(color="bright_yellow", bold=True))
+            waiting_text = Text(f"{self.waiting_message} for {elapsed:.1f}s...\n{pun}", style=Style(color="bright_yellow", bold=True))
             renderables.append(Panel(waiting_text, border_style="yellow"))
         else:
             renderables.append(Text(self.status_message, style=Style(color="#eceff4")))
+
+        if self.show_welcome_art and not self.chat_entries:
+            art = Text(self.WELCOME_ART, style=Style(color="bright_magenta", bold=True))
+            renderables.append(Panel(art, title="PAPER PUNK", border_style="bright_magenta"))
 
         # Chat history
         for entry in self.chat_entries:
@@ -521,6 +596,7 @@ class PaperQATui(App):
 
     def show_reference_detail(self, paper_id: str) -> None:
         self.active_reference_paper_id = paper_id
+        self.active_paper = None
         self.active_claim_id = None
         self.render_chat()
 
@@ -689,14 +765,134 @@ class PaperQATui(App):
             Text(f"{paper.authors} · {paper.year}"),
             Text(f"Pages: {paper.page_count}"),
             Text(f"Path: {paper.file_path}"),
+            Text("Press l to look up this paper's lineage with Exa and save it in papers/."),
             Text("\nSections found:"),
             Text("\n".join([f"- {s}" for s in sections]) or "- (none)"),
         )
         self.active_reference_paper_id = None
+        self.active_paper = paper
         self.active_claim_id = None
         self.query_one("#claim-list", ListView).clear()
         self.claim_items = {}
         self.query_one("#chunk-detail-content", Static).update(Panel(detail, border_style="#3b4252"))
+
+    def show_lineage_loading(self, paper: PaperDocument) -> None:
+        self.active_lineage_items = []
+        detail = Group(
+            Text("Searching Paper Lineage", style=Style(bold=True, color="bright_yellow")),
+            Text(paper.title, style=Style(bold=True, color="#88c0d0")),
+            Text(f"{paper.authors} · {paper.year}"),
+            Text("\nExa lookup is running. This can take a little while because it searches prior, citing, and related papers."),
+            Text("\nWhen it finishes, the lineage report will appear here and be saved under papers/lineage-*.json."),
+        )
+        self.query_one("#claim-list", ListView).clear()
+        self.claim_items = {}
+        self.query_one("#chunk-detail-content", Static).update(Panel(detail, title="Loading", border_style="yellow"))
+
+    def show_lineage_detail(self, lineage: dict) -> None:
+        source = lineage.get("source_paper", {})
+        results = lineage.get("results", {})
+        self.active_lineage_items = self.flatten_lineage_items(results)
+        source_title = str(source.get("title") or "Selected paper")
+        source_meta = f"{source.get('authors', 'Unknown')} · {source.get('year', 'n.d.')}"
+        chart = self.build_lineage_flowchart(source_title, results)
+
+        flow = Tree(Text("Paper Lineage", style=Style(color="bright_yellow", bold=True)), guide_style="#88c0d0")
+        prior = flow.add(Text("Prior work feeding into this paper", style=Style(color="magenta", bold=True)))
+        self.add_lineage_nodes(prior, results.get("prior_work", []), "No prior-work results.")
+
+        source_node = flow.add(Text(f"CURRENT PAPER: {self.trim(source_title, 90)}", style=Style(color="#88c0d0", bold=True)))
+        source_node.add(Text(source_meta, style=Style(color="#d8dee9")))
+        if source.get("doi"):
+            source_node.add(Text(f"DOI: {source.get('doi')}", style=Style(color="#d8dee9")))
+
+        citing = source_node.add(Text("Cited by / descendants", style=Style(color="green", bold=True)))
+        self.add_lineage_nodes(citing, results.get("citing_work", []), "No citing-work results.")
+
+        related = source_node.add(Text("Related sibling papers", style=Style(color="cyan", bold=True)))
+        self.add_lineage_nodes(related, results.get("related_work", []), "No related-work results.")
+
+        content = Group(
+            Panel(Text(chart, style=Style(color="#eceff4")), title="Lineage Flowchart", border_style="bright_yellow"),
+            flow,
+            Text("Press d to download the top lineage paper into papers/ and reindex it.", style=Style(color="bright_yellow", bold=True)),
+            Text(f"Saved: {lineage.get('lineage_file', '')}"),
+        )
+        self.query_one("#claim-list", ListView).clear()
+        self.claim_items = {}
+        self.query_one("#chunk-detail-content", Static).update(Panel(content, border_style="#88c0d0"))
+
+    def show_download_loading(self, title: str) -> None:
+        detail = Group(
+            Text("Downloading Lineage Paper", style=Style(bold=True, color="bright_yellow")),
+            Text(self.trim(title, 90), style=Style(bold=True, color="#88c0d0")),
+            Text("\nSaving PDF into papers/ and forcing a reindex so it appears in Papers In Project."),
+        )
+        self.query_one("#chunk-detail-content", Static).update(Panel(detail, title="Downloading", border_style="yellow"))
+
+    def show_download_complete(self, path: Path, source_title: str) -> None:
+        detail = Group(
+            Text("New Paper Added", style=Style(bold=True, color="green")),
+            Text(path.name, style=Style(bold=True, color="#88c0d0")),
+            Text(f"Downloaded from: {source_title}"),
+            Text(f"Path: {path}"),
+            Text("\nThe paper list has been reindexed. Ask a new question to search across the expanded paper set."),
+        )
+        self.query_one("#chunk-detail-content", Static).update(Panel(detail, border_style="green"))
+
+    def flatten_lineage_items(self, results: dict) -> list[dict]:
+        items = []
+        seen = set()
+        for group in ["citing_work", "related_work", "prior_work"]:
+            for item in results.get(group, []):
+                url = item.get("url")
+                if url and url not in seen:
+                    seen.add(url)
+                    items.append(item)
+        return items
+
+    def build_lineage_flowchart(self, source_title: str, results: dict) -> str:
+        prior = self.lineage_titles(results.get("prior_work", []), 3)
+        citing = self.lineage_titles(results.get("citing_work", []), 3)
+        related = self.lineage_titles(results.get("related_work", []), 3)
+        current = self.trim(source_title, 54)
+
+        lines = [
+            "PRIOR WORK",
+            *[f"  [{idx}] {title}" for idx, title in enumerate(prior, start=1)],
+            "       \\",
+            "        \\",
+            f"         ==> [ CURRENT PAPER ] {current}",
+            "        /                 \\",
+            "       /                   \\",
+            "CITED BY / DESCENDANTS     RELATED SIBLINGS",
+        ]
+        max_rows = max(len(citing), len(related), 1)
+        for idx in range(max_rows):
+            left = f"[{idx + 1}] {citing[idx]}" if idx < len(citing) else ""
+            right = f"[{idx + 1}] {related[idx]}" if idx < len(related) else ""
+            lines.append(f"  {left:<34} {right}")
+        return "\n".join(lines)
+
+    def lineage_titles(self, items: list, limit: int) -> list[str]:
+        titles = [self.trim(str(item.get("title") or "Untitled"), 32) for item in items[:limit]]
+        return titles or ["No results"]
+
+    def add_lineage_nodes(self, tree: Tree, items: list, empty_message: str) -> None:
+        if not items:
+            tree.add(Text(empty_message, style=Style(color="#d8dee9")))
+            return
+        for idx, item in enumerate(items, start=1):
+            item_title = self.trim(str(item.get("title") or "Untitled"), 90)
+            date = str(item.get("published_date") or "n.d.")
+            url = str(item.get("url") or "")
+            snippet = self.trim(str(item.get("snippet") or ""), 220)
+            node = tree.add(Text(f"{idx}. {item_title}", style=Style(bold=True)))
+            node.add(Text(date, style=Style(color="#d8dee9")))
+            if url:
+                node.add(Text(url, style=Style(color="blue", underline=True)))
+            if snippet:
+                node.add(Text(snippet, style=Style(color="#d8dee9")))
 
     def split_sentences(self, text: str) -> list[str]:
         text = (text or "").strip()

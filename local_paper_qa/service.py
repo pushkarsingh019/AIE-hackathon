@@ -7,6 +7,7 @@ import os
 import re
 from dataclasses import asdict, fields
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 from pydantic import BaseModel, Field
@@ -69,10 +70,149 @@ class LocalPaperQA:
             unsupported=[] if citations else [question],
         )
 
+    def paper_lineage(self, paper: PaperDocument, limit: int = 5) -> dict:
+        api_key = self._exa_api_key()
+        if not api_key:
+            raise RuntimeError("Set EXA_API_KEY in your shell or local .env file to look up paper lineage with Exa.")
+
+        searches = {
+            "prior_work": f'foundational earlier papers cited by "{paper.title}" {paper.authors}',
+            "citing_work": f'recent papers that cite "{paper.title}" {paper.authors}',
+            "related_work": f'related research papers similar to "{paper.title}" {paper.authors}',
+        }
+        lineage = {
+            "source_paper": {
+                "title": paper.title,
+                "authors": paper.authors,
+                "year": paper.year,
+                "doi": paper.doi,
+                "file_path": paper.file_path,
+            },
+            "results": {},
+        }
+
+        for group, query in searches.items():
+            lineage["results"][group] = self._exa_search(query, api_key=api_key, limit=limit)
+
+        output_path = self._lineage_path(paper)
+        output_path.write_text(json.dumps(lineage, ensure_ascii=False, indent=2))
+        lineage["lineage_file"] = str(output_path)
+        return lineage
+
     def retrieve(self, question: str, papers: list[PaperDocument] | None = None) -> list[PaperCitation]:
         papers = papers or self.ensure_index()
         chunks = [chunk for paper in papers for chunk in paper.chunks]
         return self.select_evidence(question, papers, chunks)
+
+    def _exa_search(self, query: str, api_key: str, limit: int) -> list[dict[str, str]]:
+        response = httpx.post(
+            "https://api.exa.ai/search",
+            headers={"x-api-key": api_key, "Content-Type": "application/json"},
+            json={
+                "query": query,
+                "type": "neural",
+                "numResults": limit,
+                "category": "research paper",
+                "contents": {"text": {"maxCharacters": 900}},
+            },
+            timeout=45,
+        )
+        response.raise_for_status()
+        results = []
+        for item in response.json().get("results", []):
+            results.append(
+                {
+                    "title": str(item.get("title") or "Untitled"),
+                    "url": str(item.get("url") or ""),
+                    "published_date": str(item.get("publishedDate") or ""),
+                    "author": str(item.get("author") or ""),
+                    "snippet": str(item.get("text") or ""),
+                }
+            )
+        return results
+
+    def _lineage_path(self, paper: PaperDocument) -> Path:
+        slug = re.sub(r"[^a-z0-9]+", "-", paper.title.lower()).strip("-")[:80] or paper.paper_id
+        return self.papers_dir / f"lineage-{slug}.json"
+
+    def download_lineage_paper(self, item: dict) -> Path:
+        title = str(item.get("title") or "lineage paper")
+        url = str(item.get("url") or "").strip()
+        if not url:
+            raise RuntimeError("Selected lineage result has no URL to download.")
+
+        candidates = self._pdf_url_candidates(url)
+        last_error: Exception | None = None
+        for candidate in candidates:
+            try:
+                response = httpx.get(candidate, follow_redirects=True, timeout=90)
+                response.raise_for_status()
+                content_type = response.headers.get("content-type", "").lower()
+                content = response.content
+                if "pdf" not in content_type and not content.startswith(b"%PDF"):
+                    raise RuntimeError(f"URL did not return a PDF: {candidate}")
+
+                output_path = self._download_path(title, candidate)
+                output_path.write_bytes(content)
+                return output_path
+            except Exception as e:
+                last_error = e
+        raise RuntimeError(f"Could not download a PDF for {title}: {last_error}")
+
+    def download_first_available_lineage_paper(self, items: list[dict]) -> tuple[Path, str]:
+        errors = []
+        for item in items:
+            try:
+                return self.download_lineage_paper(item), str(item.get("title") or "lineage paper")
+            except Exception as e:
+                errors.append(str(e))
+
+        demo_item = {
+            "title": "Playing Atari with Deep Reinforcement Learning",
+            "url": "https://arxiv.org/pdf/1312.5602.pdf",
+        }
+        try:
+            return self.download_lineage_paper(demo_item), "Demo fallback: Playing Atari with Deep Reinforcement Learning"
+        except Exception as e:
+            errors.append(str(e))
+        raise RuntimeError("No downloadable lineage PDF found. " + " | ".join(errors[:3]))
+
+    def _pdf_url_candidates(self, url: str) -> list[str]:
+        candidates = [url]
+        parsed = urlparse(url)
+        if parsed.netloc.endswith("arxiv.org") and parsed.path.startswith("/abs/"):
+            arxiv_id = parsed.path.removeprefix("/abs/")
+            candidates.insert(0, f"https://arxiv.org/pdf/{arxiv_id}.pdf")
+        if parsed.netloc.endswith("arxiv.org") and parsed.path.startswith("/html/"):
+            arxiv_id = parsed.path.removeprefix("/html/")
+            candidates.insert(0, f"https://arxiv.org/pdf/{arxiv_id}.pdf")
+        if parsed.netloc.endswith("openreview.net") and parsed.path == "/forum" and parsed.query:
+            candidates.insert(0, f"https://openreview.net/pdf?{parsed.query}")
+        return list(dict.fromkeys(candidates))
+
+    def _download_path(self, title: str, url: str) -> Path:
+        slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:90] or "lineage-paper"
+        path = self.papers_dir / f"{slug}.pdf"
+        counter = 2
+        while path.exists():
+            path = self.papers_dir / f"{slug}-{counter}.pdf"
+            counter += 1
+        return path
+
+    def _exa_api_key(self) -> str:
+        api_key = os.environ.get("EXA_API_KEY", "").strip()
+        if api_key:
+            return api_key
+
+        env_paths = [Path.cwd() / ".env", self.papers_dir.parent / ".env"]
+        for env_path in env_paths:
+            if not env_path.exists():
+                continue
+            for line in env_path.read_text().splitlines():
+                key, sep, value = line.partition("=")
+                if sep and key.strip() == "EXA_API_KEY":
+                    return value.strip().strip('"').strip("'")
+        return ""
 
     def answer_from_evidence(self, question: str, citations: list[PaperCitation]) -> str:
         return self._answer_with_chat(question, citations) or self._fallback_answer(question, citations)
