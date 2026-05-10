@@ -519,6 +519,13 @@ class PaperQATui(App):
         self.chat_entries.append(ChatEntry(role="Assistant", text=structured.answer, segments=structured.segments))
         self.render_chat()
 
+    def _render_chat_entry(self, entry: ChatEntry) -> Panel:
+        if entry.role == "You":
+            text = Text(entry.text, style=Style(color="green"))
+            return Panel(text, border_style="green")
+        else:
+            return Panel(self._render_answer_segments(entry.segments, entry.text), border_style="cyan")
+
     def _apply_structured_answer(self, structured: StructuredAnswer) -> None:
         self.structured_answer = structured
         self.claim_color_map = {claim.claim_id: self.CLAIM_COLORS[i % len(self.CLAIM_COLORS)] for i, claim in enumerate(structured.claims)}
@@ -541,29 +548,26 @@ class PaperQATui(App):
 
         # Chat history
         for entry in self.chat_entries:
-            if entry.role == "You":
-                text = Text(entry.text, style=Style(color="green"))
-                renderables.append(Panel(text, border_style="green"))
-            else:
-                renderables.append(Panel(self._render_answer_segments(entry.segments), border_style="cyan"))
+            renderables.append(self._render_chat_entry(entry))
 
         self.query_one("#chat-log", Static).update(Group(*renderables))
 
-    def _render_answer_segments(self, segments: list[AnswerSegment]) -> Text:
-        if not segments:
-            return Text("(no answer)")
-
-        out = Text()
-        for i, seg in enumerate(segments):
-            claim_id = seg.claim_id
-            underline = self.active_claim_id is not None and claim_id == self.active_claim_id
-            if underline and claim_id in self.claim_color_map:
-                style = Style(color=self.claim_color_map[claim_id], underline=True, bold=True)
-            else:
-                style = Style(color="#d8dee9")
-            sep = " " if i > 0 else ""
-            out.append(sep + seg.text, style=style)
-        return out
+    def _render_answer_segments(self, segments: list[AnswerSegment], fallback_answer: str = "") -> Text:
+        if segments:
+            out = Text()
+            for i, seg in enumerate(segments):
+                claim_id = seg.claim_id
+                underline = self.active_claim_id is not None and claim_id == self.active_claim_id
+                if underline and claim_id in self.claim_color_map:
+                    style = Style(color=self.claim_color_map[claim_id], underline=True, bold=True)
+                else:
+                    style = Style(color="#d8dee9")
+                sep = " " if i > 0 else ""
+                out.append(sep + seg.text, style=style)
+            return out
+        if fallback_answer:
+            return Text(fallback_answer, style=Style(color="#d8dee9"))
+        return Text("(no answer)", style=Style(color="#666"))
 
     def set_papers(self, papers: list[PaperDocument]) -> None:
         self.papers = papers
