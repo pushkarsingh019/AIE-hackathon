@@ -1,0 +1,22 @@
+# LocalPaperQA Configuration
+# Copy to local_paper_qa.toml and edit as needed.
+# Environment variables take precedence over this file.
+
+# Local LLM endpoints
+chat_url = "http://100.67.104.58:8001/v1"
+embedding_url = "http://100.67.104.58:8003/v1"
+
+# Model names
+chat_model = "unsloth/Qwen3.6"
+embedding_model = "unsloth/Qwen3.6"
+
+# Papers directory
+papers_dir = "papers"
+
+# Chunking
+chunk_size = 150
+chunk_overlap = 0
+
+# Retrieval
+max_citations = 8
+reranking_enabled = true

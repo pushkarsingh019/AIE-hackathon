@@ -1,0 +1,68 @@
+{
+  "nodes": [
+    {
+      "id": "5f913c6f226d",
+      "title": "The interoceptive origin of reinforcement learning",
+      "authors": "Lilian A. Weber",
+      "year": "2025",
+      "chunk_count": 103
+    },
+    {
+      "id": "ab20bbecf51d",
+      "title": "Curriculum learning for data-driven modeling of dynamical systems",
+      "authors": "Michele Alessandro Bucci ",
+      "year": "2023",
+      "chunk_count": 98
+    },
+    {
+      "id": "fc4be1d80db1",
+      "title": "Mastering the game of Go with deep neural networks and tree search",
+      "authors": "David Silver",
+      "year": "2016",
+      "chunk_count": 125
+    },
+    {
+      "id": "d1711b003fa9",
+      "title": "Curriculum learning for data-driven modeling of dynamical systems",
+      "authors": "Michele Alessandro Bucci, Onofrio Semeraro, Alexandre Allauz",
+      "year": "2023",
+      "chunk_count": 95
+    }
+  ],
+  "edges": [
+    {
+      "source": "fc4be1d80db1",
+      "target": "ab20bbecf51d",
+      "weight": 1
+    },
+    {
+      "source": "fc4be1d80db1",
+      "target": "d1711b003fa9",
+      "weight": 1
+    },
+    {
+      "source": "ab20bbecf51d",
+      "target": "d1711b003fa9",
+      "weight": 1
+    }
+  ],
+  "adjacency": {
+    "fc4be1d80db1": [
+      "ab20bbecf51d",
+      "d1711b003fa9"
+    ],
+    "ab20bbecf51d": [
+      "fc4be1d80db1",
+      "d1711b003fa9"
+    ],
+    "d1711b003fa9": [
+      "fc4be1d80db1",
+      "ab20bbecf51d"
+    ]
+  },
+  "stats": {
+    "total_papers": 4,
+    "total_edges": 3,
+    "avg_connections": 1.5
+  }
+}
