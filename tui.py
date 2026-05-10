@@ -246,6 +246,22 @@ class PaperQATui(App):
         self.load_index()
         self.set_interval(5, self.check_for_paper_changes)
 
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        # Trigger chat generation when the user presses Enter in the question box.
+        if self.waiting or self.indexing:
+            return
+
+        question = (getattr(event, "value", None) or "").strip()
+        if not question:
+            return
+
+        input_widget = self.query_one("#question-input", Input)
+        input_widget.value = ""
+
+        self._add_user_message(question)
+        self.set_waiting(True, "Generating")
+        self.answer_question(question)
+
     def _tick_waiting(self) -> None:
         if not self.waiting:
             return
@@ -280,19 +296,23 @@ class PaperQATui(App):
     @work(thread=True)
     def answer_question(self, question: str) -> None:
         # UI transitions are done via call_from_thread.
-        papers = self.qa.ensure_index()
-        citations = self.qa.retrieve(question, papers=papers)
+        try:
+            papers = self.qa.ensure_index()
+            citations = self.qa.retrieve(question, papers=papers)
 
-        self.call_from_thread(self.set_papers, papers)
-        self.call_from_thread(self.set_references, citations)
-        self.call_from_thread(self._set_status, "Generating answer...")
+            self.call_from_thread(self.set_papers, papers)
+            self.call_from_thread(self.set_references, citations)
+            self.call_from_thread(self._set_status, "Generating answer...")
 
-        structured = self.qa.answer_with_claims(question, citations)
-        self.call_from_thread(self._apply_structured_answer, structured)
-        self.call_from_thread(self._add_assistant_message, structured)
-        self.call_from_thread(self._set_status, "Ready.")
-
-        self.call_from_thread(self.set_waiting, False)
+            structured = self.qa.answer_with_claims(question, citations)
+            self.call_from_thread(self._apply_structured_answer, structured)
+            self.call_from_thread(self._add_assistant_message, structured)
+            self.call_from_thread(self._set_status, "Ready.")
+        except Exception as e:
+            # If the background work fails, ensure the input is re-enabled.
+            self.call_from_thread(self._set_status, f"Error: {e}")
+        finally:
+            self.call_from_thread(self.set_waiting, False)
 
     def action_next_citation(self) -> None:
         if not self.citation_chain:
