@@ -45,18 +45,18 @@ class PaperQATui(App):
     ]
 
     CLAIM_COLORS = [
-        "cyan",
-        "bright_cyan",
-        "green",
-        "bright_green",
-        "magenta",
-        "bright_magenta",
-        "yellow",
-        "bright_yellow",
-        "blue",
-        "bright_blue",
-        "red",
-        "bright_red",
+        "#2563eb",
+        "#7c3aed",
+        "#059669",
+        "#d97706",
+        "#dc2626",
+        "#0891b2",
+        "#4f46e5",
+        "#be185d",
+        "#65a30d",
+        "#0d9488",
+        "#9333ea",
+        "#ea580c",
     ]
 
     WAITING_LINES = [
@@ -83,94 +83,79 @@ class PaperQATui(App):
 
     CSS = """
     Screen {
-        background: #0f1117;
+        background: #fafafa;
+        color: #1a1a2e;
     }
-
     #root {
         height: 1fr;
     }
-
     #chat-pane {
         width: 1.6fr;
         height: 1fr;
-        border: solid #3b4252;
+        border: solid #e0e0e0;
     }
-
     #side-pane {
         width: 1.4fr;
         min-width: 52;
         height: 1fr;
     }
-
     #chat-log {
         height: 1fr;
         padding: 1;
         overflow-y: auto;
     }
-
     #question-input {
         dock: bottom;
         margin: 0 1 1 1;
     }
-
     #indexing-banner {
         height: 5;
         margin: 1;
         padding: 1 2;
-        border: heavy #ebcb8b;
-        background: #2e3440;
-        color: #eceff4;
+        border: heavy #3344cc;
+        background: #f0f4ff;
+        color: #1a1a2e;
         text-style: bold;
         display: none;
     }
-
     #indexing-banner.visible {
         display: block;
     }
-
     .panel-title {
         text-style: bold;
-        color: #88c0d0;
+        color: #3344cc;
         padding: 0 1;
     }
-
     #references-panel {
         height: 1.2fr;
-        border: solid #3b4252;
+        border: solid #e0e0e0;
     }
-
     #paper-panel {
         height: 1.8fr;
-        border: solid #3b4252;
+        border: solid #e0e0e0;
     }
-
     #references-list, #paper-list {
         height: 1fr;
     }
-
     #claim-list {
         height: 30%;
     }
-
     #chunk-detail {
         height: 70%;
-        border-top: solid #3b4252;
+        border-top: solid #e0e0e0;
     }
-
     #chunk-detail-content {
         padding: 1;
-        color: #d8dee9;
+        color: #1a1a2e;
     }
-
     ListItem {
         padding: 0 1;
     }
-
     #detail {
         height: 10;
-        border-top: solid #3b4252;
+        border-top: solid #e0e0e0;
         padding: 1;
-        color: #d8dee9;
+        color: #1a1a2e;
         overflow-y: auto;
     }
     """
@@ -541,10 +526,10 @@ class PaperQATui(App):
 
     def _render_chat_entry(self, entry: ChatEntry) -> Panel:
         if entry.role == "You":
-            text = Text(entry.text, style=Style(color="green"))
-            return Panel(text, border_style="green")
+            text = Text(entry.text, style=Style(color="#059669"))
+            return Panel(text, border_style="#059669")
         else:
-            return Panel(self._render_answer_segments(entry.segments, entry.text), border_style="cyan")
+            return Panel(self._render_answer_segments(entry.segments, entry.text), border_style="#e0e0e0")
 
     def _apply_structured_answer(self, structured: StructuredAnswer) -> None:
         self.structured_answer = structured
@@ -557,14 +542,14 @@ class PaperQATui(App):
         if self.waiting:
             elapsed = time.time() - self.wait_started_at
             pun = self.WAITING_LINES[int(elapsed) % len(self.WAITING_LINES)]
-            waiting_text = Text(f"{self.waiting_message} for {elapsed:.1f}s...\n{pun}", style=Style(color="bright_yellow", bold=True))
-            renderables.append(Panel(waiting_text, border_style="yellow"))
+            waiting_text = Text(f"{self.waiting_message} for {elapsed:.1f}s...\n{pun}", style=Style(color="#3344cc", bold=True))
+            renderables.append(Panel(waiting_text, border_style="#3344cc"))
         else:
-            renderables.append(Text(self.status_message, style=Style(color="#eceff4")))
+            renderables.append(Text(self.status_message, style=Style(color="#1a1a2e")))
 
         if self.show_welcome_art and not self.chat_entries:
-            art = Text(self.WELCOME_ART, style=Style(color="bright_magenta", bold=True))
-            renderables.append(Panel(art, title="PAPER PUNK", border_style="bright_magenta"))
+            art = Text(self.WELCOME_ART, style=Style(color="#3344cc", bold=True))
+            renderables.append(Panel(art, title="PAPER PUNK", border_style="#3344cc"))
 
         # Chat history
         for entry in self.chat_entries:
@@ -581,12 +566,12 @@ class PaperQATui(App):
                 if underline and claim_id in self.claim_color_map:
                     style = Style(color=self.claim_color_map[claim_id], underline=True, bold=True)
                 else:
-                    style = Style(color="#d8dee9")
+                    style = Style(color="#4a5568")
                 sep = " " if i > 0 else ""
                 out.append(sep + seg.text, style=style)
             return out
         if fallback_answer:
-            return Text(fallback_answer, style=Style(color="#d8dee9"))
+            return Text(fallback_answer, style=Style(color="#4a5568"))
         return Text("(no answer)", style=Style(color="#666"))
 
     def set_papers(self, papers: list[PaperDocument]) -> None:
@@ -674,7 +659,7 @@ class PaperQATui(App):
             self.query_one("#chunk-detail-content", Static).update("No claims mapped to this paper.")
         else:
             for claim in sorted(claims_for_paper, key=lambda c: c.claim_id):
-                color = self.claim_color_map.get(claim.claim_id, "#d8dee9")
+                color = self.claim_color_map.get(claim.claim_id, "#4a5568")
                 preview = self.trim(claim.text, 90)
 
                 # Best citation score for this claim within the selected paper.
@@ -712,25 +697,25 @@ class PaperQATui(App):
             evidence_panels.append(
                 Panel(
                     Group(
-                        Text(f"p. {c.page} · {c.section} · score {c.score:.3f}", style=Style(color="#d8dee9", bold=True)),
+                        Text(f"p. {c.page} · {c.section} · score {c.score:.3f}", style=Style(color="#4a5568", bold=True)),
                         Text("\nSentences preview (from evidence text):", style=Style(bold=True)),
                         sent_list,
                         Text("\nEvidence chunk (truncated):", style=Style(bold=True)),
                         Text(self.trim(c.quote, 1600)),
                     ),
-                    border_style="#3b4252",
+                    border_style="#e0e0e0",
                 )
             )
 
         content = Group(
-            Text(title, style=Style(bold=True, color="#88c0d0")),
+            Text(title, style=Style(bold=True, color="#3344cc")),
             Text(f"{authors} · {year}"),
             Text(f"DOI: {citations_for_paper[0].doi or 'None'}"),
             Text(f"Citation chain position: {self.active_citation_index + 1}/{len(self.citation_chain)}" if self.citation_chain else ""),
             Text("\nSupporting evidence (click a Claim below to underline answer parts):", style=Style(bold=True)),
             *evidence_panels,
         )
-        self.query_one("#chunk-detail-content", Static).update(Panel(content, border_style="#3b4252"))
+        self.query_one("#chunk-detail-content", Static).update(Panel(content, border_style="#e0e0e0"))
 
     def show_claim_detail(self, claim_id: int) -> None:
         if not self.structured_answer:
@@ -748,7 +733,7 @@ class PaperQATui(App):
         if claim:
             citation_ids = claim.citation_ids
 
-        claim_style = Style(color=self.claim_color_map.get(claim_id, "#d8dee9"), bold=True)
+        claim_style = Style(color=self.claim_color_map.get(claim_id, "#4a5568"), bold=True)
 
         citations_for_claim: list[PaperCitation] = []
         for cid in citation_ids:
@@ -782,7 +767,7 @@ class PaperQATui(App):
                         Text("\nEvidence chunk (truncated):", style=Style(bold=True)),
                         Text(self.trim(c.quote, 1600)),
                     ),
-                    border_style=self.claim_color_map.get(claim_id, "#3b4252"),
+                    border_style=self.claim_color_map.get(claim_id, "#e0e0e0"),
                 )
             )
 
@@ -791,11 +776,11 @@ class PaperQATui(App):
             return
 
         content = Group(
-            Text(title, style=Style(bold=True, color="#88c0d0")),
+            Text(title, style=Style(bold=True, color="#3344cc")),
             Text(f"{authors} · {year}"),
             *panels,
         )
-        self.query_one("#chunk-detail-content", Static).update(Panel(content, border_style="#3b4252"))
+        self.query_one("#chunk-detail-content", Static).update(Panel(content, border_style="#e0e0e0"))
 
     def show_paper_detail(self, paper: PaperDocument) -> None:
         # Bottom-right list: project introspection
@@ -809,7 +794,7 @@ class PaperQATui(App):
                 break
 
         detail = Group(
-            Text(paper.title, style=Style(bold=True, color="#88c0d0")),
+            Text(paper.title, style=Style(bold=True, color="#3344cc")),
             Text(f"{paper.authors} · {paper.year}"),
             Text(f"Pages: {paper.page_count}"),
             Text(f"Path: {paper.file_path}"),
@@ -822,20 +807,20 @@ class PaperQATui(App):
         self.active_claim_id = None
         self.query_one("#claim-list", ListView).clear()
         self.claim_items = {}
-        self.query_one("#chunk-detail-content", Static).update(Panel(detail, border_style="#3b4252"))
+        self.query_one("#chunk-detail-content", Static).update(Panel(detail, border_style="#e0e0e0"))
 
     def show_lineage_loading(self, paper: PaperDocument) -> None:
         self.active_lineage_items = []
         detail = Group(
-            Text("Searching Paper Lineage", style=Style(bold=True, color="bright_yellow")),
-            Text(paper.title, style=Style(bold=True, color="#88c0d0")),
+            Text("Searching Paper Lineage", style=Style(bold=True, color="#3344cc")),
+            Text(paper.title, style=Style(bold=True, color="#3344cc")),
             Text(f"{paper.authors} · {paper.year}"),
             Text("\nLineage lookup is running. This can take a little while because it searches prior, citing, and related papers."),
             Text("\nWhen it finishes, the lineage report will appear here and be saved under papers/lineage-*.json."),
         )
         self.query_one("#claim-list", ListView).clear()
         self.claim_items = {}
-        self.query_one("#chunk-detail-content", Static).update(Panel(detail, title="Loading", border_style="yellow"))
+        self.query_one("#chunk-detail-content", Static).update(Panel(detail, title="Loading", border_style="#3344cc"))
 
     def show_lineage_detail(self, lineage: dict) -> None:
         source = lineage.get("source_paper", {})
@@ -845,48 +830,48 @@ class PaperQATui(App):
         source_meta = f"{source.get('authors', 'Unknown')} · {source.get('year', 'n.d.')}"
         chart = self.build_lineage_flowchart(source_title, results)
 
-        flow = Tree(Text("Paper Lineage", style=Style(color="bright_yellow", bold=True)), guide_style="#88c0d0")
-        prior = flow.add(Text("Prior work feeding into this paper", style=Style(color="magenta", bold=True)))
+        flow = Tree(Text("Paper Lineage", style=Style(color="#3344cc", bold=True)), guide_style="#3344cc")
+        prior = flow.add(Text("Prior work feeding into this paper", style=Style(color="#7c3aed", bold=True)))
         self.add_lineage_nodes(prior, results.get("prior_work", []), "No prior-work results.")
 
-        source_node = flow.add(Text(f"CURRENT PAPER: {self.trim(source_title, 90)}", style=Style(color="#88c0d0", bold=True)))
-        source_node.add(Text(source_meta, style=Style(color="#d8dee9")))
+        source_node = flow.add(Text(f"CURRENT PAPER: {self.trim(source_title, 90)}", style=Style(color="#3344cc", bold=True)))
+        source_node.add(Text(source_meta, style=Style(color="#4a5568")))
         if source.get("doi"):
-            source_node.add(Text(f"DOI: {source.get('doi')}", style=Style(color="#d8dee9")))
+            source_node.add(Text(f"DOI: {source.get('doi')}", style=Style(color="#4a5568")))
 
-        citing = source_node.add(Text("Cited by / descendants", style=Style(color="green", bold=True)))
+        citing = source_node.add(Text("Cited by / descendants", style=Style(color="#059669", bold=True)))
         self.add_lineage_nodes(citing, results.get("citing_work", []), "No citing-work results.")
 
-        related = source_node.add(Text("Related sibling papers", style=Style(color="cyan", bold=True)))
+        related = source_node.add(Text("Related sibling papers", style=Style(color="#0891b2", bold=True)))
         self.add_lineage_nodes(related, results.get("related_work", []), "No related-work results.")
 
         content = Group(
-            Panel(Text(chart, style=Style(color="#eceff4")), title="Lineage Flowchart", border_style="bright_yellow"),
+            Panel(Text(chart, style=Style(color="#1a1a2e")), title="Lineage Flowchart", border_style="#3344cc"),
             flow,
-            Text("Press d to download the top lineage paper into papers/ and reindex it.", style=Style(color="bright_yellow", bold=True)),
+            Text("Press d to download the top lineage paper into papers/ and reindex it.", style=Style(color="#3344cc", bold=True)),
             Text(f"Saved: {lineage.get('lineage_file', '')}"),
         )
         self.query_one("#claim-list", ListView).clear()
         self.claim_items = {}
-        self.query_one("#chunk-detail-content", Static).update(Panel(content, border_style="#88c0d0"))
+        self.query_one("#chunk-detail-content", Static).update(Panel(content, border_style="#3344cc"))
 
     def show_download_loading(self, title: str) -> None:
         detail = Group(
-            Text("Downloading Lineage Paper", style=Style(bold=True, color="bright_yellow")),
-            Text(self.trim(title, 90), style=Style(bold=True, color="#88c0d0")),
+            Text("Downloading Lineage Paper", style=Style(bold=True, color="#3344cc")),
+            Text(self.trim(title, 90), style=Style(bold=True, color="#3344cc")),
             Text("\nSaving PDF into papers/ and forcing a reindex so it appears in Papers In Project."),
         )
-        self.query_one("#chunk-detail-content", Static).update(Panel(detail, title="Downloading", border_style="yellow"))
+        self.query_one("#chunk-detail-content", Static).update(Panel(detail, title="Downloading", border_style="#3344cc"))
 
     def show_download_complete(self, path: Path, source_title: str) -> None:
         detail = Group(
-            Text("New Paper Added", style=Style(bold=True, color="green")),
-            Text(path.name, style=Style(bold=True, color="#88c0d0")),
+            Text("New Paper Added", style=Style(bold=True, color="#059669")),
+            Text(path.name, style=Style(bold=True, color="#3344cc")),
             Text(f"Downloaded from: {source_title}"),
             Text(f"Path: {path}"),
             Text("\nThe paper list has been reindexed. Ask a new question to search across the expanded paper set."),
         )
-        self.query_one("#chunk-detail-content", Static).update(Panel(detail, border_style="green"))
+        self.query_one("#chunk-detail-content", Static).update(Panel(detail, border_style="#059669"))
 
     def flatten_lineage_items(self, results: dict) -> list[dict]:
         items = []
@@ -928,7 +913,7 @@ class PaperQATui(App):
 
     def add_lineage_nodes(self, tree: Tree, items: list, empty_message: str) -> None:
         if not items:
-            tree.add(Text(empty_message, style=Style(color="#d8dee9")))
+            tree.add(Text(empty_message, style=Style(color="#4a5568")))
             return
         for idx, item in enumerate(items, start=1):
             item_title = self.trim(str(item.get("title") or "Untitled"), 90)
@@ -936,11 +921,11 @@ class PaperQATui(App):
             url = str(item.get("url") or "")
             snippet = self.trim(str(item.get("snippet") or ""), 220)
             node = tree.add(Text(f"{idx}. {item_title}", style=Style(bold=True)))
-            node.add(Text(date, style=Style(color="#d8dee9")))
+            node.add(Text(date, style=Style(color="#4a5568")))
             if url:
                 node.add(Text(url, style=Style(color="blue", underline=True)))
             if snippet:
-                node.add(Text(snippet, style=Style(color="#d8dee9")))
+                node.add(Text(snippet, style=Style(color="#4a5568")))
 
     def split_sentences(self, text: str) -> list[str]:
         text = (text or "").strip()
