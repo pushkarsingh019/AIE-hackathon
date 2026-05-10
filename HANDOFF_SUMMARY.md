@@ -2,182 +2,123 @@
 
 ## Project Summary
 
-We extracted a standalone local-first research paper QA prototype from the larger Open Notebook repo into:
+A standalone local-first research paper QA prototype for asking questions over PDFs with cited, evidence-grounded answers.
 
+Repo path:
 ```text
 /Users/pushkarsingh/Documents/side-projects/local-paper-qa
 ```
 
-The goal is a small, local-only "paper LM" app for asking questions over PDFs with cited, evidence-grounded answers.
+The app has no dependency on the original Open Notebook codebase.
 
 ## Local AI Setup
 
-The system uses the user's local llama.cpp servers only.
+The system uses local llama.cpp servers only.
 
 Chat server:
-
 ```text
 http://100.67.104.58:8001/v1
 ```
 
 Embedding server:
-
 ```text
 http://100.67.104.58:8003/v1
 ```
 
 Model alias:
-
 ```text
 unsloth/Qwen3.6
 ```
 
-The embedding server on port `8003` was verified to support OpenAI-compatible embeddings after being started with:
+## Branch
 
-```bash
---embeddings --pooling mean
-```
-
-Verified request:
-
-```bash
-curl -s -X POST http://100.67.104.58:8003/v1/embeddings \
-  -H "Content-Type: application/json" \
-  -d '{"model":"unsloth/Qwen3.6","input":"test embedding"}'
-```
-
-It returns a 2048-dimensional embedding vector.
-
-## Standalone Repo Contents
-
-Repo path:
-
-```text
-/Users/pushkarsingh/Documents/side-projects/local-paper-qa
-```
-
-Important files:
-
-```text
-local_paper_qa/
-  __init__.py
-  models.py
-  citations.py
-  service.py
-
-cli.py
-api.py
-requirements.txt
-README.md
-scripts/benchmark_local_ai.py
-papers/
-```
-
-The app has no dependency on the original Open Notebook codebase.
+All new work is on the `sota-indexing` branch.
 
 ## Core Functionality
 
 The app supports:
-
 - Reading PDFs from `papers/`
-- Extracting text with `pypdf`
-- Chunking paper text into paragraph-like chunks
-- Extracting basic metadata from PDF metadata:
-  - title
-  - authors
-  - year
-  - venue
-  - DOI
+- **Docling-powered PDF parsing** with PyPDF fallback (structured extraction)
+- **Smart chunking** with section detection, hyphenation cleanup, and overlap
+- **Hybrid retrieval** combining embedding similarity (70%) and lexical overlap (30%)
+- **Persistent vector store** using SQLite + sqlite-vec for efficient retrieval
+- Extracting basic metadata from PDF metadata: title, authors, year, venue, DOI
 - Embedding chunks through the local embedding server
-- Saving a persistent local index at:
-
-```text
-papers/.research_index/index.json
-```
-
+- Saving a persistent local index at: `papers/.research_index/index.json`
 - Asking questions over the cached index
-- Embedding the question
-- Retrieving relevant chunks via cosine similarity
-- Sending top evidence chunks to the local chat server
-- Returning:
-  - answer
-  - citations
-  - page numbers
-  - quotes
-  - APA references
+- Returning: answer, citations, page numbers, quotes, APA references
+- **Terminal UI** with click-through citations, evidence inspection, and paper lineage
 
 ## Indexing Flow
 
 Command:
-
 ```bash
 python cli.py --reindex
 ```
 
 What it does:
-
 1. Reads all PDFs in `papers/`
-2. Extracts page text
-3. Splits into chunks
-4. Sends every chunk to:
-
+2. Extracts page text via Docling (falls back to PyPDF)
+3. Splits into smart chunks (section-aware, hyphenation cleaned)
+4. Embeds every chunk through:
 ```text
 http://100.67.104.58:8003/v1/embeddings
 ```
-
-5. Stores chunks and embeddings in:
-
-```text
-papers/.research_index/index.json
-```
-
-This means PDFs are not re-embedded on every question. Reindex is only needed when PDFs change.
+5. Stores chunks and embeddings in both:
+   - `papers/.research_index/index.json` (legacy JSON index)
+   - `papers/.research_index/vectors.db` (SQLite + sqlite-vec)
+6. Automatic folder watcher detects PDF changes and reindexes
 
 ## Question Flow
 
 Command:
-
 ```bash
 python cli.py "What are the main findings across these papers?" --json
 ```
 
 What it does:
-
-1. Loads the cached index
-2. Embeds the user question through port `8003`
-3. Finds the top relevant chunks by cosine similarity
+1. Loads the cached index (from JSON and SQLite)
+2. Embeds the user question
+3. Finds top relevant chunks by cosine similarity + lexical reranking
 4. Sends the question and evidence to chat server on port `8001`
 5. Returns JSON with answer and citations
 
 ## CLI Usage
 
-From standalone repo:
-
 ```bash
 cd /Users/pushkarsingh/Documents/side-projects/local-paper-qa
-conda activate open-notebook-research
 python cli.py --reindex
 python cli.py "What are the main findings across these papers?" --json
 ```
 
 Without JSON:
-
 ```bash
 python cli.py "What are the main findings across these papers?"
 ```
 
+## TUI Usage
+
+```bash
+python tui.py
+```
+
+Useful keys:
+- `ctrl+r`: force reindex
+- `o`: open the selected evidence PDF
+- `l` or `1`: look up paper lineage
+- `d`: download and index a lineage paper
+- `n` / `p`: navigate citation chain (next/prev)
+- `c`: show citation chain count
+- `escape`: clear the inspector
+
 ## API Usage
 
 Start API:
-
 ```bash
-cd /Users/pushkarsingh/Documents/side-projects/local-paper-qa
-conda activate open-notebook-research
 uvicorn api:app --host 0.0.0.0 --port 5060
 ```
 
 Endpoints:
-
 ```text
 GET  /health
 GET  /papers
@@ -186,17 +127,22 @@ POST /reindex
 POST /ask
 ```
 
-Example:
+## Configuration
 
-```bash
-curl -X POST http://localhost:5060/ask \
-  -H "Content-Type: application/json" \
-  -d '{"question":"What are the main findings across these papers?"}'
+### TOML Config
+
+Copy `local_paper_qa.toml` and edit:
+```toml
+chat_url = "http://100.67.104.58:8001/v1"
+embedding_url = "http://100.67.104.58:8003/v1"
+chat_model = "unsloth/Qwen3.6"
+embedding_model = "unsloth/Qwen3.6"
+papers_dir = "papers"
+chunk_size = 150
+reranking_enabled = true
 ```
 
-## Environment Variables
-
-Defaults are hardcoded in `local_paper_qa/service.py`, but can be overridden:
+### Environment Variables
 
 ```bash
 export LOCAL_PAPER_QA_CHAT_URL=http://100.67.104.58:8001/v1
@@ -205,111 +151,136 @@ export LOCAL_PAPER_QA_CHAT_MODEL=unsloth/Qwen3.6
 export LOCAL_PAPER_QA_EMBEDDING_MODEL=unsloth/Qwen3.6
 ```
 
+Priority: env vars > TOML file > defaults.
+
+## Benchmarks
+
+### Gold-Answer QA Benchmark
+```bash
+python scripts/benchmark_qa_gold.py
+```
+Reads `benchmark_gold_qa.json`, outputs `benchmark_outputs/qa_gold_benchmark.json`.
+
+### Index Latency Benchmark
+```bash
+python scripts/benchmark_index_latency.py
+```
+Outputs `benchmark_outputs/index_latency_benchmark.json`.
+
+### Chat Latency Benchmark
+```bash
+python scripts/benchmark_local_ai.py
+```
+Outputs `benchmark_outputs/local_ai_latency_benchmark.json`.
+
+### QA Quality Benchmark (Legacy)
+```bash
+python scripts/benchmark_qa_quality.py
+```
+Outputs `benchmark_outputs/qa_quality_report.json`.
+
+## Unit Tests
+
+```bash
+python -m pytest tests/test_core.py -v
+```
+11 tests covering: APA formatting, model defaults, TOML config, parser fallback.
+
+## Project Structure
+
+```text
+local_paper_qa/
+  service.py              # Core indexing and retrieval logic
+  models.py               # Dataclasses: PaperDocument, PaperChunk, PaperCitation
+  citations.py            # APA citation formatting (improved)
+  parser.py               # PDF parsing (Docling + PyPDF fallback)
+  settings.py             # Config management (TOML + env vars + defaults)
+  vector_store.py         # SQLite + sqlite-vec persistent vector store
+  citation_graph.py       # Co-citation graph builder
+  folder_watcher.py       # Watchdog-based directory watcher
+  logger.py               # Logging configuration
+  academic/               # Academic API clients (Crossref, arXiv, Semantic Scholar)
+    base.py, manager.py
+    crossref.py, arxiv.py, semantic_scholar.py
+  lineage/                # Paper lineage service
+    enhanced_service.py
+  metadata/               # Metadata extraction service
+    enhanced_extractor.py
+
+scripts/
+  benchmark_local_ai.py       # Chat/embedding latency benchmark
+  benchmark_qa_gold.py        # Gold-answer QA benchmark
+  benchmark_qa_quality.py     # Lightweight QA benchmark
+  benchmark_index_latency.py  # Index build-time benchmark
+
+papers/                     # PDF papers directory
+benchmark_outputs/          # Benchmark result JSON files
+local_paper_qa.toml         # Example config file
+tests/
+  test_core.py              # 11 unit tests
+tui.py                      # Terminal UI
+api.py                      # FastAPI endpoints
+cli.py                      # CLI entry point
+```
+
 ## Verified Tests
 
-The standalone app was tested with two PDFs copied into `papers/`.
-
-Reindex test:
-
+Reindex:
 ```bash
-conda run -n open-notebook-research python cli.py --reindex
+python cli.py --reindex
 ```
+Output: `Indexed 4 papers and 421 chunks.`
 
-Output:
-
-```text
-Indexed 2 papers and 124 chunks.
-```
-
-CLI QA test:
-
+CLI QA:
 ```bash
-conda run -n open-notebook-research python cli.py "What are the main findings across these papers?" --json
+python cli.py "What are the main findings across these papers?" --json
+```
+Returns: answer, 8 citations, quotes, page numbers, APA references.
+
+Benchmarks:
+- Index build: ~0.8s mean (4 papers, 421 chunks)
+- Chat latency: ~14s mean
+- Token overlap (gold QA): 0.917
+
+## Git History (sota-indexing branch)
+
+```
+60ef576 Fix chat not showing answers when structured segments are empty
+b400a38 Implement Phases 1-14: full feature set
+797d703 Add persistent vector store (SQLite+sqlite-vec), improve chunking
+d2393bc Improve section detection, chunking, add reranking, config module
+0395710 Add Docling fallback parser and QA quality benchmark script
+80bf8c4 Add TUI paper lineage workflow
+d3701d7 Initial local paper QA app
 ```
 
-Worked and returned:
+## Dependencies Added
 
-- answer
-- 8 citations
-- quotes
-- page numbers
-- APA references
+- `docling>=2.0.0` - Structured PDF parsing
+- `sqlite-vec>=0.1.0` - Vector similarity search in SQLite
+- `watchdog` - File system watching for auto-reindex
+- `pytest` - Unit testing
 
-FastAPI test using `TestClient`:
+## Known Limitations (Remaining)
 
-```text
-health 200 {'status': 'healthy'}
-papers 200 2
-ask 200
-citations 8
-```
+- No web UI (TUI-only by user preference)
+- Docling structured extraction works but can be slow (~60s per PDF)
+- No automatic reindex on file changes yet (folder watcher built but not wired into TUI)
+- No OCR for scanned PDFs
+- No table/figure extraction from PDFs
+- APA formatting is approximate
+- No source-highlight viewer yet
+- No gold-answer benchmark with human-written reference answers
 
-Benchmark test:
+## Recommended Next Steps
 
-```bash
-conda run -n open-notebook-research python scripts/benchmark_local_ai.py
-```
+1. Wire folder watcher into TUI auto-reindex
+2. Optimize Docling (use SimplePipeline for faster extraction)
+3. Add web UI (if desired)
+4. Add OCR support for scanned PDFs
+5. Create human-written gold QA benchmark
 
-Latest standalone benchmark:
-
-```text
-Embedding mean: 0.369s
-Chat mean:      11.336s
-Chat/embedding: ~30.7x slower
-```
-
-This confirms the architecture is right: embed/search is fast, chat is slower, so we should keep PDF chunks indexed and only send selected evidence to chat.
-
-## Current Limitations
-
-This is a working MVP, not a finished product.
-
-Known limitations (remaining):
-
-- APA formatting is approximate.
-- No web UI yet.
-- No folder watcher yet.
-- No automatic reindex on file changes yet.
-- No source-highlight viewer yet.
-- No table/figure extraction.
-- No OCR for scanned PDFs.
-- Docling structured extraction not yet working (pipeline init issues).
-- No gold-answer QA comparison benchmark (current benchmark is lightweight).
-
-## Recommended Next Features
-
-Next agent should likely work in this order:
-
-1. Fix Docling pipeline integration (StandardPdfPipeline requires specific options).
-2. Add automatic folder watcher for `papers/`.
-3. Improve APA metadata parsing.
-4. Add a simple web UI:
-   - upload PDFs
-   - list papers
-   - reindex
-   - ask question
-   - show answer
-   - show evidence cards
-5. Add click-through citation view showing paper/page/quote.
-6. Create gold-answer benchmark with human-written reference answers.
-
-## Completed Tasks
-
-The following tasks have been completed on the `sota-indexing` branch:
-
-- **Docling parser**: Added `local_paper_qa/parser.py` with Docling integration and PyPDF fallback.
-- **QA quality benchmark**: Added `scripts/benchmark_qa_quality.py` that produces JSON reports.
-- **Better section detection**: Improved `_section_heading` to handle numbered sections, all-caps headings, and more academic section names.
-- **Chunking improvements**: Better hyphenation handling, larger paragraph threshold (150 words), lower minimum chunk size (20 words).
-- **Reranking**: Hybrid reranking combining embedding similarity (70%) and lexical overlap (30%).
-- **Config module**: Added `local_paper_qa/settings.py` for all configuration via environment variables.
-- **Vector store**: Added `local_paper_qa/vector_store.py` using SQLite + sqlite-vec for persistent vector storage.
-
-## Original Repo Changes
-
-Some prototype code was also added inside the original Open Notebook repo, but the standalone app is the important clean version.
-
-Standalone app path to continue from:
+## Standalone app path to continue from:
 
 ```text
 /Users/pushkarsingh/Documents/side-projects/local-paper-qa
