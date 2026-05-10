@@ -1,0 +1,1 @@
+"""Enhanced academic API clients for paper discovery and metadata extraction."""

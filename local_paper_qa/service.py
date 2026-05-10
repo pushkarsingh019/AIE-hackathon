@@ -27,7 +27,7 @@ class AskResult(BaseModel):
 
 
 class LocalPaperQA:
-    def __init__(self, papers_dir: str = "papers", use_enhanced_lineage: bool = True):
+    def __init__(self, papers_dir: str = "papers", use_enhanced_lineage: bool | None = None):
         self.papers_dir = Path(papers_dir).expanduser().resolve()
         self.papers_dir.mkdir(parents=True, exist_ok=True)
         self.index_dir = self.papers_dir / ".research_index"
@@ -35,8 +35,15 @@ class LocalPaperQA:
         self.vector_db_path = self.index_dir / "vectors.db"
         
         # Enhanced lineage service
-        self.use_enhanced_lineage = use_enhanced_lineage
-        if use_enhanced_lineage:
+        if use_enhanced_lineage is None:
+            try:
+                self.use_enhanced_lineage = ConfigManager().get_config().api.enable_enhanced_lineage
+            except Exception:
+                self.use_enhanced_lineage = True
+        else:
+            self.use_enhanced_lineage = use_enhanced_lineage
+
+        if self.use_enhanced_lineage:
             self.enhanced_lineage_service = EnhancedLineageService(papers_dir)
         
         # Vector store for efficient retrieval
@@ -110,7 +117,57 @@ class LocalPaperQA:
                 result = self.enhanced_lineage_service.get_enhanced_paper_lineage(enhanced_paper, limit)
                 
                 if result['success']:
-                    return result['lineage_report']
+                    report = result["lineage_report"]
+                    source = report.get("source_paper", {})
+                    graph = report.get("lineage_graph", {})
+
+                    def extract_nodes(node: dict) -> list[dict]:
+                        out = []
+                        if not node:
+                            return out
+                        if node.get("node_type") and node.get("paper"):
+                            out.append(node)
+                        for child in node.get("children", []) or []:
+                            out.extend(extract_nodes(child))
+                        return out
+
+                    nodes = extract_nodes(graph)
+                    def make_item(n: dict) -> dict:
+                        paper = n.get("paper", {})
+                        authors = paper.get("authors") or []
+                        author_str = str(authors[0]) if isinstance(authors, list) and authors else str(authors) if authors else ""
+                        year = paper.get("year")
+                        url = paper.get("pdf_url") or paper.get("url") or ""
+                        abstract = paper.get("abstract") or ""
+                        return {
+                            "title": str(paper.get("title") or "Untitled"),
+                            "url": str(url),
+                            "published_date": str(year or ""),
+                            "author": author_str,
+                            "snippet": str(abstract)[:900],
+                        }
+
+                    citing_work = [make_item(n) for n in nodes if n.get("node_type") == "citing"]
+                    prior_work = [make_item(n) for n in nodes if n.get("node_type") == "cited"]
+                    related_work = [make_item(n) for n in nodes if n.get("node_type") == "related"]
+
+                    lineage = {
+                        "source_paper": {
+                            "title": str(source.get("title") or paper.title),
+                            "authors": str(source.get("authors") or paper.authors),
+                            "year": str(source.get("year") or paper.year),
+                            "doi": str(source.get("doi") or paper.doi),
+                            "file_path": paper.file_path,
+                        },
+                        "results": {
+                            "prior_work": prior_work[:limit],
+                            "citing_work": citing_work[:limit],
+                            "related_work": related_work[:limit],
+                        },
+                        "lineage_file": result.get("lineage_file"),
+                        "legacy_mode": False,
+                    }
+                    return lineage
                 else:
                     # Fall back to legacy method
                     return self._legacy_paper_lineage(paper, limit)
@@ -590,7 +647,7 @@ class LocalPaperQA:
 
     def _extract_metadata(self, path: Path, pages: list[str], pdf_meta: dict[str, str]) -> dict[str, str]:
         first_page = pages[0] if pages else ""
-        return {
+        meta = {
             "title": pdf_meta.get("Title") or self._guess_title(path, first_page),
             "authors": pdf_meta.get("Author") or self._guess_authors(first_page),
             "year": pdf_meta.get("Published") or pdf_meta.get("Date") or self._guess_year(first_page),
@@ -598,6 +655,38 @@ class LocalPaperQA:
             "doi": pdf_meta.get("doi") or self._guess_doi("\n".join(pages[:2])),
             "abstract": pdf_meta.get("Description-Abstract") or self._guess_abstract(first_page),
         }
+
+        # If we couldn't extract DOI or title confidently from PDF metadata,
+        # fall back to a lightweight text-based extractor.
+        try:
+            doi_missing = not meta.get("doi")
+            authors_unknown = meta.get("authors", "").strip().lower() in {"unknown", "unknown author"}
+            if doi_missing or authors_unknown:
+                from local_paper_qa.metadata.enhanced_extractor import EnhancedMetadataExtractor
+
+                extractor = EnhancedMetadataExtractor()
+                sample_text = "\n".join(pages[:5])
+                extracted = extractor.extract_enhanced_metadata(sample_text, path)
+
+                # Only override when extractor looks reasonably confident.
+                if extracted.confidence_score >= 0.5:
+                    if doi_missing and extracted.doi:
+                        meta["doi"] = extracted.doi
+                    if (not meta.get("title") or meta["title"] == self._guess_title(path, first_page)) and extracted.title:
+                        meta["title"] = extracted.title
+                    if authors_unknown and extracted.authors:
+                        meta["authors"] = ", ".join(extracted.authors)
+                    if meta.get("year") in {"n.d.", ""} and extracted.year is not None:
+                        meta["year"] = str(extracted.year)
+                    if meta.get("venue") in {"", "Unknown"} and extracted.venue:
+                        meta["venue"] = extracted.venue
+                    if meta.get("abstract") in {"", ""} and extracted.abstract:
+                        meta["abstract"] = extracted.abstract
+        except Exception:
+            # Keep legacy metadata if enhanced extraction fails.
+            pass
+
+        return meta
 
     def _build_chunks(self, paper_id: str, title: str, source_name: str, pages: list[str]) -> list[PaperChunk]:
         chunks: list[PaperChunk] = []

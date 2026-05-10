@@ -1,0 +1,32 @@
+[
+  {
+    "question": "What is the main contribution of the curriculum learning paper?",
+    "expected_keywords": [
+      "curriculum learning",
+      "convergence",
+      "generalization",
+      "data-driven",
+      "dynamical"
+    ],
+    "expected_citation_count": 3
+  },
+  {
+    "question": "How does AlphaGo use neural networks and tree search?",
+    "expected_keywords": [
+      "neural network",
+      "tree search",
+      "monte carlo",
+      "policy"
+    ],
+    "expected_citation_count": 3
+  },
+  {
+    "question": "What are the key findings across all indexed papers?",
+    "expected_keywords": [
+      "model",
+      "learning",
+      "training"
+    ],
+    "expected_citation_count": 2
+  }
+]

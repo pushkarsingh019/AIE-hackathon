@@ -1,0 +1,1 @@
+"""Configuration management for enhanced paper QA system."""

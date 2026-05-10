@@ -9,18 +9,19 @@ fails, the classic PyPDF extraction is used as a fallback.
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
-from typing import List, Tuple
+from typing import List
+
+logger = logging.getLogger(__name__)
 
 # Lazy import Docling – it may not be installed in all environments.
 try:
-    from docling.document import Document
+    from docling.document_converter import DocumentConverter
 except Exception:  # pragma: no cover
-    Document = None  # type: ignore
+    DocumentConverter = None  # type: ignore
 
 from pypdf import PdfReader
-
-logger = logging.getLogger(__name__)
 
 
 def _extract_with_docling(path: Path) -> List[str]:
@@ -31,10 +32,13 @@ def _extract_with_docling(path: Path) -> List[str]:
     the textual representation of each item (section headings, plain text, tables,
     figures) into a per‑page buffer.
     """
-    if Document is None:  # pragma: no cover
+    if DocumentConverter is None:  # pragma: no cover
         raise RuntimeError("Docling is not installed")
 
-    doc = Document(path)
+    converter = DocumentConverter()
+    result = converter.convert(str(path))
+    doc = result.document
+
     # Map page number -> list of strings
     page_texts: dict[int, List[str]] = {}
     for item, _level in doc.iterate_items():
@@ -87,6 +91,7 @@ def extract_pages(path: str | Path) -> List[str]:
     pdf_path = Path(path).expanduser().resolve()
     # Try Docling first – it may provide richer structure.
     try:
+        logger.info("Attempting Docling extraction for %s", path)
         return _extract_with_docling(pdf_path)
     except Exception as exc:  # pragma: no cover
         logger.warning("Docling extraction failed (%s); falling back to PyPDF", exc)

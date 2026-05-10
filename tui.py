@@ -39,6 +39,9 @@ class PaperQATui(App):
         ("1", "paper_lineage", "Lineage"),
         ("d", "download_lineage_paper", "Download Lineage Paper"),
         ("escape", "clear_detail", "Clear Detail"),
+        ("n", "next_citation", "Next Citation"),
+        ("p", "prev_citation", "Prev Citation"),
+        ("c", "show_citation_chain", "Citation Chain"),
     ]
 
     CLAIM_COLORS = [
@@ -187,6 +190,8 @@ class PaperQATui(App):
         self.active_lineage_items: list[dict] = []
         self.active_evidence: PaperCitation | None = None
 
+        self.citation_chain: list[PaperCitation] = []
+        self.active_citation_index: int = 0
         self.claim_color_map: dict[int, str] = {}
         self.chat_entries: list[ChatEntry] = []
         self.references_items: dict[str, str] = {}  # list item id -> paper_id
@@ -289,18 +294,30 @@ class PaperQATui(App):
 
         self.call_from_thread(self.set_waiting, False)
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        question = (event.value or "").strip()
-        if not question:
+    def action_next_citation(self) -> None:
+        if not self.citation_chain:
             return
-        if self.waiting or self.indexing:
-            return
+        self.active_citation_index = (self.active_citation_index + 1) % len(self.citation_chain)
+        self._show_active_citation()
 
-        event.input.value = ""
-        self.show_welcome_art = False
-        self._add_user_message(question)
-        self.set_waiting(True)
-        self.answer_question(question)
+    def action_prev_citation(self) -> None:
+        if not self.citation_chain:
+            return
+        self.active_citation_index = (self.active_citation_index - 1) % len(self.citation_chain)
+        self._show_active_citation()
+
+    def action_show_citation_chain(self) -> None:
+        if not self.citation_chain:
+            self._set_status("No citation chain available. Ask a question first.")
+            return
+        self._set_status(f"Citation chain: {len(self.citation_chain)} citations. Use n/p to navigate.")
+
+    def _show_active_citation(self) -> None:
+        if not self.citation_chain or self.active_citation_index >= len(self.citation_chain):
+            return
+        citation = self.citation_chain[self.active_citation_index]
+        self.show_reference_detail(citation.paper_id)
+        self._set_status(f"Citation {self.active_citation_index + 1}/{len(self.citation_chain)}: {citation.paper_title[:50]}")
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         item_id = event.item.id or ""
@@ -330,7 +347,7 @@ class PaperQATui(App):
             return
         paper = self.active_paper
         self.show_lineage_loading(paper)
-        self.set_waiting(True, f"Searching Exa lineage for {paper.title}")
+        self.set_waiting(True, f"Searching paper lineage for {paper.title}")
         self.lookup_paper_lineage(paper)
 
     def action_download_lineage_paper(self) -> None:
@@ -446,6 +463,7 @@ class PaperQATui(App):
         self.active_paper = None
         self.active_lineage_items = []
         self.active_evidence = None
+        self.active_citation_index = 0
         self.claim_color_map = self.claim_color_map if self.claim_color_map else {}
         self.query_one("#chunk-detail-content", Static).update("Select a paper or a reference claim to inspect sentences.")
         self.query_one("#claim-list", ListView).clear()
@@ -571,6 +589,10 @@ class PaperQATui(App):
         self.references_refresh_nonce += 1
         self.references_items = {}
 
+        # Build citation chain for n/p navigation
+        self.citation_chain = list(citations)
+        self.active_citation_index = 0
+
         references_list = self.query_one("#references-list", ListView)
         references_list.clear()
 
@@ -679,6 +701,8 @@ class PaperQATui(App):
         content = Group(
             Text(title, style=Style(bold=True, color="#88c0d0")),
             Text(f"{authors} · {year}"),
+            Text(f"DOI: {citations_for_paper[0].doi or 'None'}"),
+            Text(f"Citation chain position: {self.active_citation_index + 1}/{len(self.citation_chain)}" if self.citation_chain else ""),
             Text("\nSupporting evidence (click a Claim below to underline answer parts):", style=Style(bold=True)),
             *evidence_panels,
         )
@@ -765,7 +789,7 @@ class PaperQATui(App):
             Text(f"{paper.authors} · {paper.year}"),
             Text(f"Pages: {paper.page_count}"),
             Text(f"Path: {paper.file_path}"),
-            Text("Press l to look up this paper's lineage with Exa and save it in papers/."),
+            Text("Press l to look up this paper's lineage and save it in papers/."),
             Text("\nSections found:"),
             Text("\n".join([f"- {s}" for s in sections]) or "- (none)"),
         )
@@ -782,7 +806,7 @@ class PaperQATui(App):
             Text("Searching Paper Lineage", style=Style(bold=True, color="bright_yellow")),
             Text(paper.title, style=Style(bold=True, color="#88c0d0")),
             Text(f"{paper.authors} · {paper.year}"),
-            Text("\nExa lookup is running. This can take a little while because it searches prior, citing, and related papers."),
+            Text("\nLineage lookup is running. This can take a little while because it searches prior, citing, and related papers."),
             Text("\nWhen it finishes, the lineage report will appear here and be saved under papers/lineage-*.json."),
         )
         self.query_one("#claim-list", ListView).clear()
