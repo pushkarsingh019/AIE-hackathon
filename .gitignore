@@ -3,8 +3,13 @@ __pycache__/
 .DS_Store
 .env
 papers/.research_index/
+papers/.enhanced_lineage/
+papers/citation_graph.json
 papers/lineage-*.json
+papers/lineage-*/
 papers/*.pdf
 !papers/1-s2.0-S1364661325001202-main.pdf
 !papers/Mastering_the_game_of_Go_with.pdf
 benchmark_outputs/
+.pytest_cache/
+benchmark_outputs/*.png

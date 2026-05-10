@@ -86,6 +86,25 @@ Useful keys:
 uvicorn api:app --host 0.0.0.0 --port 5060
 ```
 
+## Production Setup
+On GitHub (and in general), do not commit generated artifacts. This repo keeps runtime outputs locally in:
+
+- `papers/.research_index/` (SQLite vector store + index cache)
+- `papers/.enhanced_lineage/` (enhanced lineage JSON)
+- `papers/citation_graph.json` (citation graph)
+
+These are ignored by git and regenerated as needed.
+
+### Required environment variables
+- Set your local OpenAI-compatible servers for chat and embeddings:
+  - `LOCAL_PAPER_QA_CHAT_URL`
+  - `LOCAL_PAPER_QA_EMBEDDING_URL`
+  - `LOCAL_PAPER_QA_CHAT_MODEL` (optional if defaults are OK)
+  - `LOCAL_PAPER_QA_EMBEDDING_MODEL` (optional if defaults are OK)
+
+### Optional keys
+- `EXA_API_KEY` enables legacy Exa-based lineage lookups.
+
 Endpoints:
 
 - `GET /health`
