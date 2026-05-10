@@ -264,10 +264,8 @@ This confirms the architecture is right: embed/search is fast, chat is slower, s
 
 This is a working MVP, not a finished product.
 
-Known limitations:
+Known limitations (remaining):
 
-- Section detection is weak.
-- PDF text extraction may mangle text/hyphenation.
 - APA formatting is approximate.
 - No web UI yet.
 - No folder watcher yet.
@@ -275,29 +273,37 @@ Known limitations:
 - No source-highlight viewer yet.
 - No table/figure extraction.
 - No OCR for scanned PDFs.
-- Retrieval uses embeddings but no reranker yet.
-- It currently stores embeddings in JSON, which is fine for MVP but not ideal long-term.
+- Docling structured extraction not yet working (pipeline init issues).
+- No gold-answer QA comparison benchmark (current benchmark is lightweight).
 
 ## Recommended Next Features
 
 Next agent should likely work in this order:
 
-1. Add automatic folder watcher for `papers/`.
-2. Add better persistent vector store:
-   - SQLite + `sqlite-vec`
-   - or LanceDB
-3. Improve section detection and chunk cleanup.
-4. Improve APA metadata parsing.
-5. Add reranking over top embedding results.
-6. Add a simple web UI:
+1. Fix Docling pipeline integration (StandardPdfPipeline requires specific options).
+2. Add automatic folder watcher for `papers/`.
+3. Improve APA metadata parsing.
+4. Add a simple web UI:
    - upload PDFs
    - list papers
    - reindex
    - ask question
    - show answer
    - show evidence cards
-7. Add click-through citation view showing paper/page/quote.
-8. Add config file for local endpoints instead of hardcoded defaults.
+5. Add click-through citation view showing paper/page/quote.
+6. Create gold-answer benchmark with human-written reference answers.
+
+## Completed Tasks
+
+The following tasks have been completed on the `sota-indexing` branch:
+
+- **Docling parser**: Added `local_paper_qa/parser.py` with Docling integration and PyPDF fallback.
+- **QA quality benchmark**: Added `scripts/benchmark_qa_quality.py` that produces JSON reports.
+- **Better section detection**: Improved `_section_heading` to handle numbered sections, all-caps headings, and more academic section names.
+- **Chunking improvements**: Better hyphenation handling, larger paragraph threshold (150 words), lower minimum chunk size (20 words).
+- **Reranking**: Hybrid reranking combining embedding similarity (70%) and lexical overlap (30%).
+- **Config module**: Added `local_paper_qa/settings.py` for all configuration via environment variables.
+- **Vector store**: Added `local_paper_qa/vector_store.py` using SQLite + sqlite-vec for persistent vector storage.
 
 ## Original Repo Changes
 
