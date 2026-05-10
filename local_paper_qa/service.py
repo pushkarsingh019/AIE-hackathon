@@ -13,7 +13,9 @@ import httpx
 from pydantic import BaseModel, Field
 
 from local_paper_qa.citations import format_apa
+from local_paper_qa.config import get_chat_model, get_chat_url, get_embedding_model, get_embedding_url
 from local_paper_qa.models import AnswerSegment, PaperChunk, PaperCitation, PaperDocument, StructuredAnswer, SupportedClaim
+from local_paper_qa.lineage.enhanced_service import EnhancedLineageService, EnhancedPaperDocument
 
 
 class AskResult(BaseModel):
@@ -25,15 +27,19 @@ class AskResult(BaseModel):
 
 
 class LocalPaperQA:
-    CHAT_BASE_URL = "http://100.67.104.58:8001/v1"
-    EMBEDDING_BASE_URL = "http://100.67.104.58:8003/v1"
-    MODEL = "unsloth/Qwen3.6"
-
-    def __init__(self, papers_dir: str = "papers"):
+    def __init__(self, papers_dir: str = "papers", use_enhanced_lineage: bool = True):
         self.papers_dir = Path(papers_dir).expanduser().resolve()
         self.papers_dir.mkdir(parents=True, exist_ok=True)
         self.index_dir = self.papers_dir / ".research_index"
         self.index_file = self.index_dir / "index.json"
+        
+        # Enhanced lineage service
+        self.use_enhanced_lineage = use_enhanced_lineage
+        if use_enhanced_lineage:
+            self.enhanced_lineage_service = EnhancedLineageService(papers_dir)
+        
+        # Legacy Exa integration (fallback)
+        self.legacy_exa_available = bool(self._exa_api_key())
 
     def list_papers(self) -> list[PaperDocument]:
         return [self._load_paper(path) for path in sorted(self.papers_dir.glob("*.pdf"))]
@@ -71,6 +77,41 @@ class LocalPaperQA:
         )
 
     def paper_lineage(self, paper: PaperDocument, limit: int = 5) -> dict:
+        """Get paper lineage using enhanced academic APIs or legacy Exa as fallback."""
+        if self.use_enhanced_lineage and hasattr(self, 'enhanced_lineage_service'):
+            try:
+                # Convert PaperDocument to EnhancedPaperDocument
+                enhanced_paper = EnhancedPaperDocument(
+                    paper_id=paper.paper_id,
+                    file_path=paper.file_path,
+                    title=paper.title,
+                    authors=paper.authors,
+                    year=paper.year,
+                    venue=paper.venue,
+                    doi=paper.doi,
+                    abstract=paper.abstract,
+                    page_count=paper.page_count,
+                    chunks=paper.chunks
+                )
+                
+                # Get enhanced lineage
+                result = self.enhanced_lineage_service.get_enhanced_paper_lineage(enhanced_paper, limit)
+                
+                if result['success']:
+                    return result['lineage_report']
+                else:
+                    # Fall back to legacy method
+                    return self._legacy_paper_lineage(paper, limit)
+                    
+            except Exception as e:
+                print(f"Enhanced lineage error: {e}, falling back to legacy method")
+                return self._legacy_paper_lineage(paper, limit)
+        else:
+            # Use legacy Exa-based lineage
+            return self._legacy_paper_lineage(paper, limit)
+    
+    def _legacy_paper_lineage(self, paper: PaperDocument, limit: int = 5) -> dict:
+        """Legacy paper lineage using Exa API (fallback method)."""
         api_key = self._exa_api_key()
         if not api_key:
             raise RuntimeError("Set EXA_API_KEY in your shell or local .env file to look up paper lineage with Exa.")
@@ -89,6 +130,7 @@ class LocalPaperQA:
                 "file_path": paper.file_path,
             },
             "results": {},
+            "legacy_mode": True  # Indicate this is using the legacy system
         }
 
         for group, query in searches.items():
@@ -176,6 +218,75 @@ class LocalPaperQA:
         except Exception as e:
             errors.append(str(e))
         raise RuntimeError("No downloadable lineage PDF found. " + " | ".join(errors[:3]))
+    
+    def download_enhanced_lineage_paper(self, item: dict) -> Optional[Path]:
+        """Download a paper using enhanced lineage system."""
+        if not self.use_enhanced_lineage or not hasattr(self, 'enhanced_lineage_service'):
+            # Fall back to legacy method
+            return self.download_lineage_paper(item)
+        
+        try:
+            # Create AcademicPaper from item
+            from local_paper_qa.academic.base import AcademicPaper
+            
+            paper = AcademicPaper(
+                title=str(item.get("title") or "Untitled"),
+                authors=[str(item.get("author") or "")] if item.get("author") else [],
+                year=self._extract_year_from_date(str(item.get("published_date") or "")),
+                doi=item.get("doi"),
+                abstract=item.get("snippet"),
+                url=item.get("url"),
+                pdf_url=item.get("pdf_url") or item.get("url"),
+                source="enhanced_lineage"
+            )
+            
+            # Use enhanced lineage service to download
+            return self.enhanced_lineage_service.download_enhanced_lineage_paper(paper)
+            
+        except Exception as e:
+            print(f"Enhanced download error: {e}, falling back to legacy method")
+            return self.download_lineage_paper(item)
+    
+    def download_first_enhanced_lineage_paper(self, items: list[dict]) -> tuple[Optional[Path], str]:
+        """Download the first available paper using enhanced lineage system."""
+        errors = []
+        for item in items:
+            try:
+                path = self.download_enhanced_lineage_paper(item)
+                if path:
+                    return path, str(item.get("title") or "enhanced lineage paper")
+            except Exception as e:
+                errors.append(str(e))
+        
+        # Fall back to legacy method
+        try:
+            return self.download_first_available_lineage_paper(items)
+        except Exception as e:
+            errors.append(str(e))
+        
+        raise RuntimeError("No downloadable enhanced lineage PDF found. " + " | ".join(errors[:3]))
+    
+    def get_enhanced_lineage_summary(self, lineage_path: str) -> dict:
+        """Get enhanced lineage summary if available."""
+        if not self.use_enhanced_lineage or not hasattr(self, 'enhanced_lineage_service'):
+            return {}
+        
+        try:
+            return self.enhanced_lineage_service.get_lineage_summary(lineage_path)
+        except Exception as e:
+            print(f"Error getting enhanced lineage summary: {e}")
+            return {}
+    
+    def find_lineage_papers_by_type(self, lineage_path: str, paper_type: str, limit: int = 5) -> list[dict]:
+        """Find papers by type in enhanced lineage."""
+        if not self.use_enhanced_lineage or not hasattr(self, 'enhanced_lineage_service'):
+            return []
+        
+        try:
+            return self.enhanced_lineage_service.find_lineage_papers_by_type(lineage_path, paper_type, limit)
+        except Exception as e:
+            print(f"Error finding lineage papers by type: {e}")
+            return []
 
     def _pdf_url_candidates(self, url: str) -> list[str]:
         candidates = [url]
@@ -189,6 +300,15 @@ class LocalPaperQA:
         if parsed.netloc.endswith("openreview.net") and parsed.path == "/forum" and parsed.query:
             candidates.insert(0, f"https://openreview.net/pdf?{parsed.query}")
         return list(dict.fromkeys(candidates))
+    
+    def _extract_year_from_date(self, date_str: str) -> Optional[int]:
+        """Extract year from various date formats."""
+        if not date_str:
+            return None
+        
+        import re
+        year_match = re.search(r"(19|20)\d{2}", date_str)
+        return int(year_match.group(1)) if year_match else None
 
     def _download_path(self, title: str, url: str) -> Path:
         slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:90] or "lineage-paper"
@@ -231,7 +351,14 @@ class LocalPaperQA:
         query_embedding = self.embed_text(question)
         for chunk in chunks:
             embedding = chunk.metadata.get("embedding") or []
-            chunk.score = self._cosine(query_embedding, embedding) if query_embedding else self._lexical_score(question, chunk)
+            chunk.score = self._cosine(query_embedding, embedding) if query_embedding else 0.0
+
+        # Rerank top results using a hybrid of embedding similarity and lexical overlap
+        top_n = min(50, len(chunks))
+        top_chunks = sorted(chunks, key=lambda c: c.score, reverse=True)[:top_n]
+        for chunk in top_chunks:
+            lexical = self._lexical_score(question, chunk)
+            chunk.score = chunk.score * 0.7 + lexical * 0.3
 
         citations: list[PaperCitation] = []
         seen: set[tuple[str, int]] = set()
@@ -264,8 +391,8 @@ class LocalPaperQA:
         text = text.strip()
         if not text:
             return []
-        base_url = os.environ.get("LOCAL_PAPER_QA_EMBEDDING_URL", self.EMBEDDING_BASE_URL)
-        model = os.environ.get("LOCAL_PAPER_QA_EMBEDDING_MODEL", self.MODEL)
+        base_url = get_embedding_url()
+        model = get_embedding_model()
         try:
             response = httpx.post(
                 f"{base_url.rstrip('/')}/embeddings",
@@ -289,8 +416,8 @@ class LocalPaperQA:
             "If evidence is insufficient, say so.\n\n"
             f"Question: {question}\n\nEvidence:\n{evidence}"
         )
-        base_url = os.environ.get("LOCAL_PAPER_QA_CHAT_URL", self.CHAT_BASE_URL)
-        model = os.environ.get("LOCAL_PAPER_QA_CHAT_MODEL", self.MODEL)
+        base_url = get_chat_url()
+        model = get_chat_model()
         try:
             response = httpx.post(
                 f"{base_url.rstrip('/')}/chat/completions",
@@ -331,8 +458,8 @@ class LocalPaperQA:
             "}\n\n"
             f"Question: {question}\n\nEvidence:\n{evidence}"
         )
-        base_url = os.environ.get("LOCAL_PAPER_QA_CHAT_URL", self.CHAT_BASE_URL)
-        model = os.environ.get("LOCAL_PAPER_QA_CHAT_MODEL", self.MODEL)
+        base_url = get_chat_url()
+        model = get_chat_model()
         try:
             response = httpx.post(
                 f"{base_url.rstrip('/')}/chat/completions",
@@ -439,11 +566,15 @@ class LocalPaperQA:
         )
 
     def _extract_pdf_pages(self, path: Path) -> tuple[list[str], dict[str, str]]:
+        # Use the unified parser that prefers Docling and falls back to PyPDF.
+        from .parser import extract_pages
+        # Extract page‑wise text using the helper.
+        pages = extract_pages(path)
+        # For metadata we still rely on PyPDF as Docling does not expose it directly.
         from pypdf import PdfReader
-
         reader = PdfReader(str(path))
         metadata = {str(k).lstrip("/"): str(v) for k, v in (reader.metadata or {}).items()}
-        return [page.extract_text() or "" for page in reader.pages], metadata
+        return pages, metadata
 
     def _extract_metadata(self, path: Path, pages: list[str], pdf_meta: dict[str, str]) -> dict[str, str]:
         first_page = pages[0] if pages else ""
@@ -465,23 +596,32 @@ class LocalPaperQA:
                 if heading:
                     section = heading
                     continue
-                if len(paragraph.split()) < 25:
+                if len(paragraph.split()) < 20:
                     continue
                 chunks.append(PaperChunk(f"{paper_id}-p{page_number}-{para_index}", paper_id, title, page_number, section, paragraph, metadata={"source": source_name}))
         return chunks
 
     def _paragraphs(self, text: str) -> list[str]:
-        lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines()]
+        # Clean up hyphenation at line ends and collapse whitespace
+        cleaned_lines = []
+        for line in text.splitlines():
+            stripped = line.rstrip()
+            # Remove hyphenation caused by PDF extraction
+            if stripped.endswith("-"):
+                cleaned_lines.append(stripped[:-1])
+            else:
+                cleaned_lines.append(re.sub(r"\s+", " ", stripped).strip())
+        # Rejoin into paragraphs separated by blank lines
         paragraphs: list[str] = []
         buffer: list[str] = []
-        for line in lines:
+        for line in cleaned_lines:
             if not line:
                 if buffer:
                     paragraphs.append(" ".join(buffer))
                     buffer = []
                 continue
             buffer.append(line)
-            if sum(len(part.split()) for part in buffer) >= 110:
+            if sum(len(part.split()) for part in buffer) >= 150:
                 paragraphs.append(" ".join(buffer))
                 buffer = []
         if buffer:
@@ -490,9 +630,15 @@ class LocalPaperQA:
 
     def _section_heading(self, text: str) -> str:
         text = text.strip()
-        if len(text) > 90 or len(text.split()) > 10:
+        if len(text) > 90 or len(text.split()) > 15:
             return ""
-        if re.match(r"^(\d+(\.\d+)*\s+)?(abstract|introduction|background|related work|methods?|methodology|experiments?|results?|discussion|limitations?|conclusion|references)\b", text, re.I):
+        if re.match(r"^(\d+(\.\d+)*\s+)?(abstract|introduction|background|related work|methods?|methodology|experiments?|results?|discussion|limitations?|conclusion|references|acknowledgments|supplementary|appendix)\b", text, re.I):
+            return text[:80]
+        # Detect numbered section titles like "1. Introduction", "2.1 Methods"
+        if re.match(r"^\d+(\.\d+)*\s+[A-Z][a-zA-Z\s.,:;]+", text):
+            return text[:80]
+        # All-caps headings (common in papers)
+        if re.match(r"^[A-Z][A-Z\s.,:;]{10,}$", text):
             return text[:80]
         return ""
 
