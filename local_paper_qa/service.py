@@ -13,7 +13,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from local_paper_qa.citations import format_apa
-from local_paper_qa.config import get_chat_model, get_chat_url, get_embedding_model, get_embedding_url
+from local_paper_qa.settings import get_chat_model, get_chat_url, get_embedding_model, get_embedding_url
 from local_paper_qa.models import AnswerSegment, PaperChunk, PaperCitation, PaperDocument, StructuredAnswer, SupportedClaim
 from local_paper_qa.lineage.enhanced_service import EnhancedLineageService, EnhancedPaperDocument
 
@@ -32,14 +32,25 @@ class LocalPaperQA:
         self.papers_dir.mkdir(parents=True, exist_ok=True)
         self.index_dir = self.papers_dir / ".research_index"
         self.index_file = self.index_dir / "index.json"
+        self.vector_db_path = self.index_dir / "vectors.db"
         
         # Enhanced lineage service
         self.use_enhanced_lineage = use_enhanced_lineage
         if use_enhanced_lineage:
             self.enhanced_lineage_service = EnhancedLineageService(papers_dir)
         
+        # Vector store for efficient retrieval
+        self._init_vector_store()
+        
         # Legacy Exa integration (fallback)
         self.legacy_exa_available = bool(self._exa_api_key())
+
+    def _init_vector_store(self) -> None:
+        from local_paper_qa.vector_store import VectorStore
+        try:
+            self.vector_store = VectorStore(self.vector_db_path)
+        except Exception:
+            self.vector_store = None
 
     def list_papers(self) -> list[PaperDocument]:
         return [self._load_paper(path) for path in sorted(self.papers_dir.glob("*.pdf"))]
@@ -62,6 +73,7 @@ class LocalPaperQA:
                 chunk.metadata["embedding"] = self.embed_text(chunk.text[:2000])
             papers.append(paper)
         self._save_index(papers)
+        self._save_vector_store(papers)
         return papers
 
     def ask(self, question: str) -> AskResult:
@@ -669,6 +681,29 @@ class LocalPaperQA:
         self.index_dir.mkdir(parents=True, exist_ok=True)
         files = self._current_file_state()
         self.index_file.write_text(json.dumps({"files": files, "papers": [asdict(p) for p in papers]}, ensure_ascii=False))
+
+    def _save_vector_store(self, papers: list[PaperDocument]) -> None:
+        if self.vector_store is None:
+            return
+        items = []
+        for paper in papers:
+            for chunk in paper.chunks:
+                embedding = chunk.metadata.get("embedding")
+                if embedding:
+                    items.append((chunk.chunk_id, embedding, {
+                        "paper_id": chunk.paper_id,
+                        "paper_title": chunk.paper_title,
+                        "page": chunk.page,
+                        "section": chunk.section,
+                    }))
+        self.vector_store.insert_many(items)
+
+    def _query_vector_store(self, query_embedding: List[float], limit: int = 10) -> List[str]:
+        """Return chunk IDs from the vector store for the top-K results."""
+        if self.vector_store is None:
+            return []
+        results = self.vector_store.query(query_embedding, limit=limit)
+        return [r["id"] for r in results]
 
     def _current_file_state(self) -> dict[str, dict[str, float | int]]:
         return {
