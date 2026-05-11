@@ -51,7 +51,7 @@ class LocalPaperQA:
             self.use_enhanced_lineage = use_enhanced_lineage
 
         if self.use_enhanced_lineage:
-            self.enhanced_lineage_service = EnhancedLineageService(papers_dir)
+            self.enhanced_lineage_service = EnhancedLineageService(resolved_papers_dir)
         
         # Vector store for efficient retrieval
         self._init_vector_store()
