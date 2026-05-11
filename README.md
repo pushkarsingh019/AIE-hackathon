@@ -73,6 +73,22 @@ python setup_bot.py
 
 It writes `local_paper_qa.toml` (with `papers_dir = "."`), so the CLI indexes only `*.pdf` in that folder and caches the index under `./.research_index/`.
 
+After it finishes, you can run:
+
+```bash
+python cli.py "Your question here"
+```
+
+If you add or replace PDFs and want to force a rebuild:
+
+```bash
+python cli.py --reindex
+```
+
+Notes:
+- Indexing is non-recursive (only `*.pdf` in the current directory).
+- Cached indexes are reused when PDFs and the embedding configuration match.
+
 ## TUI
 
 ```bash
