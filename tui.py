@@ -59,27 +59,31 @@ class PaperQATui(App):
         "#ea580c",
     ]
 
-    WAITING_LINES = [
-        "RAG-time story: checking the footnotes...",
-        "Looking for receipts in the PDF aisle...",
-        "Embedding your curiosity locally...",
-        "Cross-examining the citations...",
-        "Page-turner mode: literally...",
-        "Asking the papers to show their work...",
-        "Scanning for the sharpest supporting sentences...",
-        "Summoning evidence from the stack...",
+    # Calmer, more professional waiting/loading messages
+    WAITING_MESSAGES = [
+        "Processing your request...",
+        "Analyzing documents...",
+        "Retrieving information...",
+        "Generating response...",
+        "Compiling evidence...",
     ]
 
-    WELCOME_ART = r"""
-   ____  ___    ____  __________     ____  ___       ____  ___
-  / __ \/   |  / __ \/ ____/ __ \   / __ \/   |     / __ \/   |
- / /_/ / /| | / /_/ / __/ / /_/ /  / / / / /| |    / / / / /| |
-/ ____/ ___ |/ ____/ /___/ _, _/  / /_/ / ___ |   / /_/ / ___ |
-/_/   /_/  |_/_/   /_____/_/ |_|   \___\/_/  |_|   \___\/_/  |_|
-
-       local-first paper chaos machine  //  citations or it didn't happen
-       press l/1 for lineage  //  press d after lineage to ingest a paper
-""".strip("\n")
+    # Cleaner, more minimal welcome screen content
+    WELCOME_MESSAGE = Text(
+        "Welcome to Local Paper QA!\n\n"
+        "Ask a question about your papers to get started.\n"
+        "Keyboard shortcuts:\n"
+        "  Ctrl+C: Quit\n"
+        "  Ctrl+R: Reindex papers\n"
+        "  O: Open evidence PDF\n"
+        "  L/1: Show paper lineage\n"
+        "  D: Download lineage paper\n"
+        "  Escape: Clear detail panel\n"
+        "  N: Next citation\n"
+        "  P: Previous citation\n"
+        "  C: Show citation chain",
+        style=Style(color="#3344cc", bold=True)
+    )
 
     CSS = """
     Screen {
@@ -93,6 +97,7 @@ class PaperQATui(App):
         width: 1.6fr;
         height: 1fr;
         border: solid #e0e0e0;
+        margin-right: 1;
     }
     #side-pane {
         width: 1.4fr;
@@ -101,12 +106,14 @@ class PaperQATui(App):
     }
     #chat-log {
         height: 1fr;
-        padding: 1;
+        padding: 1 2;
         overflow-y: auto;
     }
     #question-input {
         dock: bottom;
         margin: 0 1 1 1;
+        border: solid #e0e0e0;
+        padding: 0 1;
     }
     #indexing-banner {
         height: 5;
@@ -125,17 +132,20 @@ class PaperQATui(App):
         text-style: bold;
         color: #3344cc;
         padding: 0 1;
+        margin-top: 1;
     }
     #references-panel {
         height: 1.2fr;
         border: solid #e0e0e0;
+        margin-bottom: 1;
     }
     #paper-panel {
         height: 1.8fr;
         border: solid #e0e0e0;
     }
-    #references-list, #paper-list {
+    #references-list, #paper-list, #claim-list {
         height: 1fr;
+        padding: 0 1;
     }
     #claim-list {
         height: 30%;
@@ -150,6 +160,22 @@ class PaperQATui(App):
     }
     ListItem {
         padding: 0 1;
+        margin-bottom: 1;
+    }
+    ListItem.highlight {
+        background: #e0e0e0;
+    }
+    .chat-user-message {
+        background: #e0e0e0;
+        border: solid #e0e0e0;
+        padding: 1;
+        margin-bottom: 1;
+    }
+    .chat-assistant-message {
+        background: #f0f4ff;
+        border: solid #3344cc;
+        padding: 1;
+        margin-bottom: 1;
     }
     #detail {
         height: 10;
@@ -470,7 +496,7 @@ class PaperQATui(App):
         self.active_evidence = None
         self.active_citation_index = 0
         self.claim_color_map = self.claim_color_map if self.claim_color_map else {}
-        self.query_one("#chunk-detail-content", Static).update("Select a paper or a reference claim to inspect sentences.")
+        self.query_one("#chunk-detail-content", Static).update("Select a paper from 'Papers In Project' or a reference from 'References' to view details here.")
         self.query_one("#claim-list", ListView).clear()
         self.references_items = getattr(self, "references_items", {})
         self.render_chat()
@@ -526,10 +552,10 @@ class PaperQATui(App):
 
     def _render_chat_entry(self, entry: ChatEntry) -> Panel:
         if entry.role == "You":
-            text = Text(entry.text, style=Style(color="#059669"))
-            return Panel(text, border_style="#059669")
+            text = Text(entry.text, style=Style(color="#1a1a2e"))
+            return Panel(text, title="[b]You[/b]", css_class="chat-user-message")
         else:
-            return Panel(self._render_answer_segments(entry.segments, entry.text), border_style="#e0e0e0")
+            return Panel(self._render_answer_segments(entry.segments, entry.text), title="[b]Assistant[/b]", css_class="chat-assistant-message")
 
     def _apply_structured_answer(self, structured: StructuredAnswer) -> None:
         self.structured_answer = structured
@@ -541,15 +567,14 @@ class PaperQATui(App):
         # Status line / waiting panel
         if self.waiting:
             elapsed = time.time() - self.wait_started_at
-            pun = self.WAITING_LINES[int(elapsed) % len(self.WAITING_LINES)]
-            waiting_text = Text(f"{self.waiting_message} for {elapsed:.1f}s...\n{pun}", style=Style(color="#3344cc", bold=True))
+            message_idx = int(elapsed) % len(self.WAITING_MESSAGES)
+            waiting_text = Text(f"{self.waiting_message} ({self.WAITING_MESSAGES[message_idx]})", style=Style(color="#3344cc", bold=True))
             renderables.append(Panel(waiting_text, border_style="#3344cc"))
         else:
             renderables.append(Text(self.status_message, style=Style(color="#1a1a2e")))
 
         if self.show_welcome_art and not self.chat_entries:
-            art = Text(self.WELCOME_ART, style=Style(color="#3344cc", bold=True))
-            renderables.append(Panel(art, title="PAPER PUNK", border_style="#3344cc"))
+            renderables.append(Panel(self.WELCOME_MESSAGE, title="Local Paper QA", border_style="#3344cc"))
 
         # Chat history
         for entry in self.chat_entries:
@@ -583,7 +608,7 @@ class PaperQATui(App):
         paper_list.clear()
 
         if not papers:
-            paper_list.append(ListItem(Static("No PDFs found in papers/"), id=f"paper-empty-{self.papers_refresh_nonce}"))
+            paper_list.append(ListItem(Static("No papers found in your 'papers' directory.\n\nTo get started:\n1. Place PDF research papers into the 'papers' directory.\n2. The app will automatically index them.\n3. Ask questions about your papers!"), id=f"paper-empty-{self.papers_refresh_nonce}"))
             return
 
         for idx, paper in enumerate(papers):
@@ -591,7 +616,7 @@ class PaperQATui(App):
             self.paper_items[item_id] = idx
             title = self.trim(paper.title, 46)
             meta = f"{paper.year} · {paper.page_count} pages"
-            paper_list.append(ListItem(Static(f"{idx + 1}. {title}\n   {meta}"), id=item_id))
+            paper_list.append(ListItem(Static(f"{idx + 1}. [b]{title}[/b]\n  {meta}"), id=item_id))
 
     def set_references(self, citations: list[PaperCitation]) -> None:
         self.citations = citations
@@ -606,7 +631,7 @@ class PaperQATui(App):
         references_list.clear()
 
         if not citations:
-            references_list.append(ListItem(Static("No matching references."), id=f"ref-empty-{self.references_refresh_nonce}"))
+            references_list.append(ListItem(Static("No references found for your question.\n\nTry rephrasing your question or adding more papers to your collection."), id=f"ref-empty-{self.references_refresh_nonce}"))
             return
 
         by_paper: dict[str, list[tuple[int, PaperCitation]]] = defaultdict(list)
@@ -620,7 +645,10 @@ class PaperQATui(App):
             sentences = self.split_sentences(top_c.quote)
             preview = sentences[0] if sentences else self.trim(top_c.quote, 90)
 
-            label = f"{self.trim(top_c.paper_title, 36)}\n   {top_c.year} · p. {top_c.page} · {top_c.section}\n   \"{self.trim(preview, 62)}\""
+            label = Text()
+            label.append(f"{self.trim(top_c.paper_title, 36)}\n", style="bold #3344cc")
+            label.append(f"  {top_c.year} · p. {top_c.page} · {top_c.section}\n", style="#4a5568")
+            label.append(f"  \"{self.trim(preview, 62)}\"", style="italic #4a5568")
             item_id = f"ref-{self.references_refresh_nonce}-{paper_id}"
             self.references_items[item_id] = paper_id
             references_list.append(ListItem(Static(label), id=item_id))
@@ -633,7 +661,7 @@ class PaperQATui(App):
 
         citations_for_paper = [c for c in self.citations if c.paper_id == paper_id]
         if not citations_for_paper:
-            self.query_one("#chunk-detail-content", Static).update("No references for this paper.")
+            self.query_one("#chunk-detail-content", Static).update("No references found for this paper in the current answer.")
             self.query_one("#claim-list", ListView).clear()
             self.claim_items = {}
             return
@@ -644,7 +672,7 @@ class PaperQATui(App):
         claim_list.clear()
 
         if not self.structured_answer or not self.structured_answer.claims:
-            self.query_one("#chunk-detail-content", Static).update("No structured claim mapping available.")
+            self.query_one("#chunk-detail-content", Static).update("No structured claims available for this answer.")
             return
 
         claims_for_paper: list[SupportedClaim] = []
@@ -656,7 +684,7 @@ class PaperQATui(App):
                 claims_for_paper.append(claim)
 
         if not claims_for_paper:
-            self.query_one("#chunk-detail-content", Static).update("No claims mapped to this paper.")
+            self.query_one("#chunk-detail-content", Static).update("No claims from the current answer are mapped to this paper.")
         else:
             for claim in sorted(claims_for_paper, key=lambda c: c.claim_id):
                 color = self.claim_color_map.get(claim.claim_id, "#4a5568")
@@ -677,8 +705,8 @@ class PaperQATui(App):
                 claim_list.append(
                     ListItem(
                         Static(
-                            f"Claim {claim.claim_id}: {preview}"
-                            + (f"  · score {best_score:.3f}" if best_score is not None else "")
+                            f"[b]Claim {claim.claim_id}:[/b] {preview}"
+                            + (f" [dim]· score {best_score:.3f}[/dim]" if best_score is not None else "")
                         ),
                         id=item_id,
                     )
