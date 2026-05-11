@@ -89,6 +89,28 @@ Notes:
 - Indexing is non-recursive (only `*.pdf` in the current directory).
 - Cached indexes are reused when PDFs and the embedding configuration match.
 
+### Agent prompt (copy/paste)
+Use the following prompt if you want another automation agent to get this running in a new folder:
+
+```text
+You are in a folder that contains research PDF files. Your goal is to set up local-paper-qa for this folder.
+
+Steps:
+1. Ensure Python dependencies are installed: pip install -r requirements.txt
+2. Run the deterministic setup bot to generate local_paper_qa.toml: python setup_bot.py
+   - Provide LOCAL_PAPER_QA_CHAT_URL and LOCAL_PAPER_QA_EMBEDDING_URL (and optional model names) when prompted.
+   - Confirm overwrite if the config already exists.
+3. Verify there are PDF files (*.pdf) in this folder.
+4. Build/load the index and answer once:
+   - python cli.py "What are the main findings across these papers?"
+5. If indexing looks stale after changing PDFs, force rebuild:
+   - python cli.py --reindex "What are the main findings across these papers?"
+
+Constraints/behavior:
+- Indexing is non-recursive; only *.pdf in the current directory are included.
+- The cache is stored under ./.research_index/ and is reused when PDFs + embedding config match.
+```
+
 ## TUI
 
 ```bash
