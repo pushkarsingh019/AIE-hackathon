@@ -213,7 +213,7 @@ class PaperQATui(App):
     }
     """
 
-    def __init__(self, papers_dir: str = "papers"):
+    def __init__(self, papers_dir: str | None = None):
         super().__init__()
         self.qa = LocalPaperQA(papers_dir=papers_dir)
         self.papers_dir = self.qa.papers_dir
@@ -768,7 +768,14 @@ class PaperQATui(App):
         paper_list.clear()
 
         if not papers:
-            paper_list.append(ListItem(Static("No papers found in your 'papers' directory.\n\nTo get started:\n1. Place PDF research papers into the 'papers' directory.\n2. The app will automatically index them.\n3. Ask questions about your papers!"), id=f"paper-empty-{self.papers_refresh_nonce}"))
+            paper_list.append(
+                ListItem(
+                    Static(
+                        f"No papers found in {self.papers_dir}.\n\nTo get started:\n1. Place PDF research papers into this folder (non-recursive).\n2. The app will automatically index them.\n3. Ask questions about your papers!"
+                    ),
+                    id=f"paper-empty-{self.papers_refresh_nonce}",
+                )
+            )
             return
 
         for idx, paper in enumerate(papers):
@@ -1161,7 +1168,7 @@ class PaperQATui(App):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Terminal UI for Local Paper QA")
-    parser.add_argument("--papers-dir", default="papers", help="Directory containing PDF papers")
+    parser.add_argument("--papers-dir", default=None, help="Directory containing PDF papers (overrides local_paper_qa.toml)")
     args = parser.parse_args()
     PaperQATui(papers_dir=args.papers_dir).run()
 

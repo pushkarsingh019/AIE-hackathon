@@ -13,7 +13,13 @@ import httpx
 from pydantic import BaseModel, Field
 
 from local_paper_qa.citations import format_apa
-from local_paper_qa.settings import get_chat_model, get_chat_url, get_embedding_model, get_embedding_url
+from local_paper_qa.settings import (
+    get_chat_model,
+    get_chat_url,
+    get_embedding_model,
+    get_embedding_url,
+    get_papers_dir,
+)
 from local_paper_qa.models import AnswerSegment, PaperChunk, PaperCitation, PaperDocument, StructuredAnswer, SupportedClaim
 from local_paper_qa.lineage.enhanced_service import EnhancedLineageService, EnhancedPaperDocument
 
@@ -27,8 +33,9 @@ class AskResult(BaseModel):
 
 
 class LocalPaperQA:
-    def __init__(self, papers_dir: str = "papers", use_enhanced_lineage: bool | None = None):
-        self.papers_dir = Path(papers_dir).expanduser().resolve()
+    def __init__(self, papers_dir: str | None = None, use_enhanced_lineage: bool | None = None):
+        resolved_papers_dir = papers_dir or get_papers_dir()
+        self.papers_dir = Path(resolved_papers_dir).expanduser().resolve()
         self.papers_dir.mkdir(parents=True, exist_ok=True)
         self.index_dir = self.papers_dir / ".research_index"
         self.index_file = self.index_dir / "index.json"
@@ -51,6 +58,18 @@ class LocalPaperQA:
         
         # Legacy Exa integration (fallback)
         self.legacy_exa_available = bool(self._exa_api_key())
+
+    def _current_index_fingerprint(self) -> dict[str, str | int | float | bool]:
+        """Fingerprint for index validity.
+
+        We include embedding config because embeddings are stored in the cached chunks
+        and must match the embedding endpoint/model.
+        """
+
+        return {
+            "embedding_url": get_embedding_url(),
+            "embedding_model": get_embedding_model(),
+        }
 
     def _init_vector_store(self) -> None:
         from local_paper_qa.vector_store import VectorStore
@@ -808,6 +827,8 @@ class LocalPaperQA:
         if not self.index_file.exists():
             return None
         payload = json.loads(self.index_file.read_text())
+        if payload.get("fingerprint") != self._current_index_fingerprint():
+            return None
         current_files = self._current_file_state()
         if not self._same_file_map(payload.get("files", {}), current_files):
             return None
@@ -817,6 +838,8 @@ class LocalPaperQA:
         if not self.index_file.exists():
             return {}
         payload = json.loads(self.index_file.read_text())
+        if payload.get("fingerprint") != self._current_index_fingerprint():
+            return {}
         indexed_files = payload.get("files", {})
         papers = [self._paper_from_dict(item) for item in payload.get("papers", [])]
         current_files = self._current_file_state()
@@ -830,7 +853,16 @@ class LocalPaperQA:
     def _save_index(self, papers: list[PaperDocument]) -> None:
         self.index_dir.mkdir(parents=True, exist_ok=True)
         files = self._current_file_state()
-        self.index_file.write_text(json.dumps({"files": files, "papers": [asdict(p) for p in papers]}, ensure_ascii=False))
+        self.index_file.write_text(
+            json.dumps(
+                {
+                    "fingerprint": self._current_index_fingerprint(),
+                    "files": files,
+                    "papers": [asdict(p) for p in papers],
+                },
+                ensure_ascii=False,
+            )
+        )
 
     def _save_vector_store(self, papers: list[PaperDocument]) -> None:
         if self.vector_store is None:

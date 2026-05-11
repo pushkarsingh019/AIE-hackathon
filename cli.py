@@ -9,7 +9,7 @@ from local_paper_qa.service import LocalPaperQA
 def main() -> None:
     parser = argparse.ArgumentParser(description="Local paper QA")
     parser.add_argument("question", nargs="?", help="Question to ask")
-    parser.add_argument("--papers-dir", default="papers")
+    parser.add_argument("--papers-dir", default=None, help="Directory containing PDF papers (overrides local_paper_qa.toml)")
     parser.add_argument("--reindex", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
@@ -21,7 +21,7 @@ def main() -> None:
         return
 
     if not args.question:
-        print("Add PDFs to papers/, then ask a question or run --reindex.")
+        print("Add PDFs to your configured papers_dir (local_paper_qa.toml or --papers-dir), then ask a question or run --reindex.")
         return
 
     result = qa.ask(args.question)

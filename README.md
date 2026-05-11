@@ -64,6 +64,15 @@ python cli.py --reindex
 python cli.py "What are the main findings across these papers?" --json
 ```
 
+### Folder-based setup
+Run the setup bot in the folder that contains your PDFs:
+
+```bash
+python setup_bot.py
+```
+
+It writes `local_paper_qa.toml` (with `papers_dir = "."`), so the CLI indexes only `*.pdf` in that folder and caches the index under `./.research_index/`.
+
 ## TUI
 
 ```bash
