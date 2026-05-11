@@ -147,6 +147,24 @@ class PaperQATui(App):
         height: 1fr;
         padding: 0 1;
     }
+    ListView {
+        background: #fafafa;
+    }
+    ListItem {
+        background: #fafafa;
+        padding: 0 1;
+        margin-bottom: 1;
+    }
+    ListItem.highlight {
+        background: #e0e0e0;
+    }
+    Header {
+        background: #3344cc;
+    }
+    Footer {
+        background: #f0f4ff;
+        color: #1a1a2e;
+    }
     #claim-list {
         height: 30%;
     }
@@ -157,25 +175,6 @@ class PaperQATui(App):
     #chunk-detail-content {
         padding: 1;
         color: #1a1a2e;
-    }
-    ListItem {
-        padding: 0 1;
-        margin-bottom: 1;
-    }
-    ListItem.highlight {
-        background: #e0e0e0;
-    }
-    .chat-user-message {
-        background: #e0e0e0;
-        border: solid #e0e0e0;
-        padding: 1;
-        margin-bottom: 1;
-    }
-    .chat-assistant-message {
-        background: #f0f4ff;
-        border: solid #3344cc;
-        padding: 1;
-        margin-bottom: 1;
     }
     #detail {
         height: 10;
@@ -552,10 +551,12 @@ class PaperQATui(App):
 
     def _render_chat_entry(self, entry: ChatEntry) -> Panel:
         if entry.role == "You":
-            text = Text(entry.text, style=Style(color="#1a1a2e"))
-            return Panel(text, title="[b]You[/b]", css_class="chat-user-message")
+            text = Text(f"> You: {entry.text}", style=Style(color="#1a1a2e"))
+            return text
         else:
-            return Panel(self._render_answer_segments(entry.segments, entry.text), title="[b]Assistant[/b]", css_class="chat-assistant-message")
+            text = Text("Assistant: ", style=Style(color="#3344cc", bold=True))
+            text.append(self._render_answer_segments(entry.segments, entry.text))
+            return text
 
     def _apply_structured_answer(self, structured: StructuredAnswer) -> None:
         self.structured_answer = structured
@@ -569,12 +570,12 @@ class PaperQATui(App):
             elapsed = time.time() - self.wait_started_at
             message_idx = int(elapsed) % len(self.WAITING_MESSAGES)
             waiting_text = Text(f"{self.waiting_message} ({self.WAITING_MESSAGES[message_idx]})", style=Style(color="#3344cc", bold=True))
-            renderables.append(Panel(waiting_text, border_style="#3344cc"))
+            renderables.append(waiting_text)
         else:
             renderables.append(Text(self.status_message, style=Style(color="#1a1a2e")))
 
         if self.show_welcome_art and not self.chat_entries:
-            renderables.append(Panel(self.WELCOME_MESSAGE, title="Local Paper QA", border_style="#3344cc"))
+            renderables.append(self.WELCOME_MESSAGE)
 
         # Chat history
         for entry in self.chat_entries:
