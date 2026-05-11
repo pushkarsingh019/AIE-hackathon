@@ -28,12 +28,15 @@ class ChatEntry:
     role: str
     text: str = ""
     segments: list[AnswerSegment] = field(default_factory=list)
+    streaming: bool = False
+    streaming_text: str = ""
 
 
 class PaperQATui(App):
     BINDINGS = [
         ("ctrl+c", "quit", "Quit"),
         ("ctrl+r", "reindex", "Reindex"),
+        ("ctrl+t", "toggle_theme", "Toggle Theme"),
         ("o", "open_evidence", "Open PDF"),
         ("l", "paper_lineage", "Lineage"),
         ("1", "paper_lineage", "Lineage"),
@@ -44,59 +47,108 @@ class PaperQATui(App):
         ("c", "show_citation_chain", "Citation Chain"),
     ]
 
+    # Theme color palettes
+    DARK_THEME = {
+        "bg": "#1a1b26",
+        "bg_alt": "#24283b",
+        "fg": "#c0caf5",
+        "fg_dim": "#565f89",
+        "accent": "#7aa2f7",
+        "border": "#3b4261",
+        "user": "#9ece6a",
+        "purple": "#bb9af7",
+        "cyan": "#7dcfff",
+        "green": "#9ece6a",
+    }
+    LIGHT_THEME = {
+        "bg": "#f8f6f1",
+        "bg_alt": "#f0ede6",
+        "fg": "#2c2c2c",
+        "fg_dim": "#6b7280",
+        "accent": "#3344cc",
+        "border": "#d4d0c8",
+        "user": "#16a34a",
+        "purple": "#7c3aed",
+        "cyan": "#0891b2",
+        "green": "#059669",
+    }
+
     CLAIM_COLORS = [
-        "#2563eb",
-        "#7c3aed",
-        "#059669",
-        "#d97706",
-        "#dc2626",
-        "#0891b2",
-        "#4f46e5",
-        "#be185d",
-        "#65a30d",
-        "#0d9488",
-        "#9333ea",
-        "#ea580c",
+        "#5f87ff",
+        "#af5fff",
+        "#5faf5f",
+        "#d7af5f",
+        "#ff5f5f",
+        "#5fd7d7",
+        "#875fff",
+        "#d75f87",
+        "#87af00",
+        "#00afaf",
+        "#af87ff",
+        "#ff8700",
     ]
 
-    # Calmer, more professional waiting/loading messages
+    # Retro pixel-art style loading messages
     WAITING_MESSAGES = [
-        "Processing your request...",
-        "Analyzing documents...",
-        "Retrieving information...",
-        "Generating response...",
-        "Compiling evidence...",
+        "[::::::::  ] scanning pages...",
+        "[█:::::::  ] parsing chunks...",
+        "[██::::::  ] embedding vectors...",
+        "[███:::::  ] matching citations...",
+        "[████::::  ] ranking evidence...",
+        "[█████:::  ] assembling answer...",
+        "[██████::  ] cross-referencing...",
+        "[███████:  ] almost there...",
     ]
 
-    # Cleaner, more minimal welcome screen content
-    WELCOME_MESSAGE = Text(
-        "Welcome to Local Paper QA!\n\n"
-        "Ask a question about your papers to get started.\n"
-        "Keyboard shortcuts:\n"
-        "  Ctrl+C: Quit\n"
-        "  Ctrl+R: Reindex papers\n"
-        "  O: Open evidence PDF\n"
-        "  L/1: Show paper lineage\n"
-        "  D: Download lineage paper\n"
-        "  Escape: Clear detail panel\n"
-        "  N: Next citation\n"
-        "  P: Previous citation\n"
-        "  C: Show citation chain",
-        style=Style(color="#3344cc", bold=True)
+    # ASCII pixel-art welcome banner
+    WELCOME_ART = (
+        "\n"
+        "  ┌─────────────────────────────────────────────────────────┐\n"
+        "  │                                                         │\n"
+        "  │   ██████╗  █████╗ ██████╗ ███████╗██████╗              │\n"
+        "  │   ██╔══██╗██╔══██╗██╔══██╗██╔════╝██╔══██╗             │\n"
+        "  │   ██████╔╝███████║██████╔╝█████╗  ██████╔╝             │\n"
+        "  │   ██╔═══╝ ██╔══██║██╔═══╝ ██╔══╝  ██╔══██╗             │\n"
+        "  │   ██║     ██║  ██║██║     ███████╗██║  ██║             │\n"
+        "  │   ╚═╝     ╚═╝  ╚═╝╚═╝     ╚══════╝╚═╝  ╚═╝             │\n"
+        "  │                    ╔═══╗ ╔═══╗                          │\n"
+        "  │                    ║ Q ║ ║ A ║                          │\n"
+        "  │                    ╚═══╝ ╚═══╝                          │\n"
+        "  │                                                         │\n"
+        "  │   local-first · citation-backed · your papers, your qa  │\n"
+        "  │                                                         │\n"
+        "  ├─────────────────────────────────────────────────────────┤\n"
+        "  │  CONTROLS                                               │\n"
+        "  │  ┌───┐ ┌───┐                                           │\n"
+        "  │  │ l │ │ 1 │  paper lineage                            │\n"
+        "  │  └───┘ └───┘                                           │\n"
+        "  │  ┌───┐                                                  │\n"
+        "  │  │ d │  download lineage paper                         │\n"
+        "  │  └───┘                                                  │\n"
+        "  │  ┌───┐                                                  │\n"
+        "  │  │ o │  open evidence PDF                              │\n"
+        "  │  └───┘                                                  │\n"
+        "  │  ┌───┐ ┌───┐                                           │\n"
+        "  │  │ n │ │ p │  next / prev citation                     │\n"
+        "  │  └───┘ └───┘                                           │\n"
+        "  │  ┌───┐                                                  │\n"
+        "  │  │ c │  citation chain                                 │\n"
+        "  │  └───┘                                                  │\n"
+        "  │  ┌─────────┐ ┌─────┐                                   │\n"
+        "  │  │ ctrl+r  │ │ esc │  reindex / clear                  │\n"
+        "  │  └─────────┘ └─────┘                                   │\n"
+        "  │                                                         │\n"
+        "  │  type a question below to begin ░░░░░░░░░░░░░░░░░░░░░  │\n"
+        "  └─────────────────────────────────────────────────────────┘\n"
     )
 
     CSS = """
-    Screen {
-        background: #fafafa;
-        color: #1a1a2e;
-    }
     #root {
         height: 1fr;
     }
     #chat-pane {
         width: 1.6fr;
         height: 1fr;
-        border: solid #e0e0e0;
         margin-right: 1;
     }
     #side-pane {
@@ -104,24 +156,21 @@ class PaperQATui(App):
         min-width: 52;
         height: 1fr;
     }
-    #chat-log {
+    #chat-scroll {
         height: 1fr;
+    }
+    #chat-log {
         padding: 1 2;
-        overflow-y: auto;
     }
     #question-input {
         dock: bottom;
         margin: 0 1 1 1;
-        border: solid #e0e0e0;
         padding: 0 1;
     }
     #indexing-banner {
         height: 5;
         margin: 1;
         padding: 1 2;
-        border: heavy #3344cc;
-        background: #f0f4ff;
-        color: #1a1a2e;
         text-style: bold;
         display: none;
     }
@@ -130,57 +179,36 @@ class PaperQATui(App):
     }
     .panel-title {
         text-style: bold;
-        color: #3344cc;
         padding: 0 1;
         margin-top: 1;
     }
     #references-panel {
         height: 1.2fr;
-        border: solid #e0e0e0;
         margin-bottom: 1;
     }
     #paper-panel {
         height: 1.8fr;
-        border: solid #e0e0e0;
     }
     #references-list, #paper-list, #claim-list {
         height: 1fr;
         padding: 0 1;
     }
-    ListView {
-        background: #fafafa;
-    }
     ListItem {
-        background: #fafafa;
         padding: 0 1;
         margin-bottom: 1;
-    }
-    ListItem.highlight {
-        background: #e0e0e0;
-    }
-    Header {
-        background: #3344cc;
-    }
-    Footer {
-        background: #f0f4ff;
-        color: #1a1a2e;
     }
     #claim-list {
         height: 30%;
     }
     #chunk-detail {
         height: 70%;
-        border-top: solid #e0e0e0;
     }
     #chunk-detail-content {
         padding: 1;
-        color: #1a1a2e;
     }
     #detail {
         height: 10;
-        border-top: solid #e0e0e0;
         padding: 1;
-        color: #1a1a2e;
         overflow-y: auto;
     }
     """
@@ -220,6 +248,82 @@ class PaperQATui(App):
         self.papers_refresh_nonce = 0
         self.references_refresh_nonce = 0
 
+        # Theme state: start in dark mode
+        self.is_dark_mode = True
+
+    @property
+    def theme_colors(self) -> dict:
+        """Return the active theme color palette."""
+        return self.DARK_THEME if self.is_dark_mode else self.LIGHT_THEME
+
+    def action_toggle_theme(self) -> None:
+        """Toggle between dark and light mode."""
+        self.is_dark_mode = not self.is_dark_mode
+        self.dark = self.is_dark_mode
+        self._apply_theme()
+        self.render_chat()
+        mode_name = "dark" if self.is_dark_mode else "light"
+        self._set_status(f"Switched to {mode_name} mode. (Ctrl+T to toggle)")
+
+    def _apply_theme(self) -> None:
+        """Apply the current theme colors to all widgets via inline styles."""
+        tc = self.theme_colors
+        # Screen-level
+        self.screen.styles.background = tc["bg"]
+        self.screen.styles.color = tc["fg"]
+        # Chat pane
+        chat_pane = self.query_one("#chat-pane", Vertical)
+        chat_pane.styles.border = ("dashed", tc["border"])
+        # Side pane panels
+        for panel_id in ("#references-panel", "#paper-panel"):
+            try:
+                panel = self.query_one(panel_id, Vertical)
+                panel.styles.border = ("dashed", tc["border"])
+            except Exception:
+                pass
+        # Input
+        inp = self.query_one("#question-input", Input)
+        inp.styles.border = ("dashed", tc["border"])
+        inp.styles.background = tc["bg_alt"]
+        inp.styles.color = tc["fg"]
+        # Header & Footer
+        try:
+            self.query_one("Header").styles.background = tc["accent"]
+            self.query_one("Footer").styles.background = tc["bg_alt"]
+            self.query_one("Footer").styles.color = tc["fg_dim"]
+        except Exception:
+            pass
+        # Panel titles
+        for title_widget in self.query(".panel-title"):
+            title_widget.styles.color = tc["accent"]
+        # ListViews and ListItems
+        for lv in self.query("ListView"):
+            lv.styles.background = tc["bg"]
+        for li in self.query("ListItem"):
+            li.styles.background = tc["bg"]
+        # Chunk detail
+        try:
+            chunk = self.query_one("#chunk-detail", VerticalScroll)
+            chunk.styles.border_top = ("dashed", tc["border"])
+            chunk.styles.background = tc["bg"]
+            self.query_one("#chunk-detail-content", Static).styles.color = tc["fg"]
+        except Exception:
+            pass
+        # Chat scroll and log
+        try:
+            self.query_one("#chat-scroll", VerticalScroll).styles.background = tc["bg"]
+            self.query_one("#chat-log", Static).styles.background = tc["bg"]
+        except Exception:
+            pass
+        # Indexing banner
+        try:
+            banner = self.query_one("#indexing-banner", Static)
+            banner.styles.border = ("heavy", tc["accent"])
+            banner.styles.background = tc["bg_alt"]
+            banner.styles.color = tc["fg"]
+        except Exception:
+            pass
+
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
 
@@ -230,10 +334,11 @@ class PaperQATui(App):
                     "Indexing papers...\nNew or changed PDFs are being embedded. Unchanged PDFs are reused.",
                     id="indexing-banner",
                 )
-                yield Static(
-                    f"Watching: {self.papers_dir}\nIndexing status will appear here. Ask a question below.",
-                    id="chat-log",
-                )
+                with VerticalScroll(id="chat-scroll"):
+                    yield Static(
+                        f"Watching: {self.papers_dir}\nIndexing status will appear here. Ask a question below.",
+                        id="chat-log",
+                    )
                 yield Input(placeholder="Ask a question about your papers...", id="question-input")
 
             with Vertical(id="side-pane"):
@@ -251,6 +356,8 @@ class PaperQATui(App):
         yield Footer()
 
     def on_mount(self) -> None:
+        self.dark = self.is_dark_mode
+        self._apply_theme()
         self.query_one("#question-input", Input).focus()
         self.set_interval(0.4, self._tick_waiting)
         self.load_index()
@@ -314,9 +421,23 @@ class PaperQATui(App):
             self.call_from_thread(self.set_references, citations)
             self.call_from_thread(self._set_status, "Generating answer...")
 
-            structured = self.qa.answer_with_claims(question, citations)
+            # Start streaming: add a placeholder assistant entry
+            self.call_from_thread(self._start_streaming_entry)
+
+            # Stream tokens from the LLM
+            full_response = ""
+            for token, accumulated in self.qa.stream_answer_with_claims(question, citations):
+                full_response = accumulated
+                self.call_from_thread(self._update_streaming_entry, accumulated)
+
+            # Finalize: parse the full response into structured claims
+            structured = self.qa._parse_structured_answer(full_response, citations)
+            if structured is None:
+                # Fallback: use the raw streamed text as the answer
+                structured = self.qa._fallback_structured_answer(full_response or "No answer generated.", citations)
+
             self.call_from_thread(self._apply_structured_answer, structured)
-            self.call_from_thread(self._add_assistant_message, structured)
+            self.call_from_thread(self._finalize_streaming_entry, structured)
             self.call_from_thread(self._set_status, "Ready.")
         except Exception as e:
             # If the background work fails, ensure the input is re-enabled.
@@ -549,14 +670,43 @@ class PaperQATui(App):
         self.chat_entries.append(ChatEntry(role="Assistant", text=structured.answer, segments=structured.segments))
         self.render_chat()
 
-    def _render_chat_entry(self, entry: ChatEntry) -> Panel:
+    def _start_streaming_entry(self) -> None:
+        """Add a placeholder streaming entry for the assistant."""
+        self.chat_entries.append(ChatEntry(role="Assistant", text="", streaming=True, streaming_text=""))
+        self.render_chat()
+
+    def _update_streaming_entry(self, text: str) -> None:
+        """Update the last chat entry with new streaming text."""
+        if self.chat_entries and self.chat_entries[-1].streaming:
+            self.chat_entries[-1].streaming_text = text
+            self.render_chat()
+
+    def _finalize_streaming_entry(self, structured: StructuredAnswer) -> None:
+        """Replace the streaming entry with the final structured answer."""
+        if self.chat_entries and self.chat_entries[-1].streaming:
+            self.chat_entries[-1].streaming = False
+            self.chat_entries[-1].text = structured.answer
+            self.chat_entries[-1].segments = structured.segments
+            self.chat_entries[-1].streaming_text = ""
+            self.render_chat()
+
+    def _render_chat_entry(self, entry: ChatEntry):
+        tc = self.theme_colors
         if entry.role == "You":
-            text = Text(f"> You: {entry.text}", style=Style(color="#1a1a2e"))
+            text = Text(f"  ▸ you: {entry.text}", style=Style(color=tc["user"]))
             return text
         else:
-            text = Text("Assistant: ", style=Style(color="#3344cc", bold=True))
-            text.append(self._render_answer_segments(entry.segments, entry.text))
-            return text
+            if entry.streaming:
+                # Show streaming text with a blinking cursor
+                text = Text("  ◂ assistant: ", style=Style(color=tc["accent"], bold=True))
+                display_text = entry.streaming_text or ""
+                text.append(display_text, style=Style(color=tc["fg_dim"]))
+                text.append("█", style=Style(color=tc["accent"], blink=True))
+                return text
+            else:
+                text = Text("  ◂ assistant: ", style=Style(color=tc["accent"], bold=True))
+                text.append(self._render_answer_segments(entry.segments, entry.text))
+                return text
 
     def _apply_structured_answer(self, structured: StructuredAnswer) -> None:
         self.structured_answer = structured
@@ -569,21 +719,30 @@ class PaperQATui(App):
         if self.waiting:
             elapsed = time.time() - self.wait_started_at
             message_idx = int(elapsed) % len(self.WAITING_MESSAGES)
-            waiting_text = Text(f"{self.waiting_message} ({self.WAITING_MESSAGES[message_idx]})", style=Style(color="#3344cc", bold=True))
+            bar = self.WAITING_MESSAGES[message_idx]
+            waiting_text = Text(f"  {bar}  {self.waiting_message}", style=Style(color=self.theme_colors["accent"], bold=True))
             renderables.append(waiting_text)
         else:
-            renderables.append(Text(self.status_message, style=Style(color="#1a1a2e")))
+            renderables.append(Text(f"░ {self.status_message}", style=Style(color=self.theme_colors["fg_dim"])))
 
         if self.show_welcome_art and not self.chat_entries:
-            renderables.append(self.WELCOME_MESSAGE)
+            art = Text(self.WELCOME_ART, style=Style(color=self.theme_colors["accent"]))
+            renderables.append(art)
 
         # Chat history
         for entry in self.chat_entries:
             renderables.append(self._render_chat_entry(entry))
 
         self.query_one("#chat-log", Static).update(Group(*renderables))
+        # Auto-scroll to bottom after updating chat
+        try:
+            scroll_container = self.query_one("#chat-scroll", VerticalScroll)
+            scroll_container.scroll_end(animate=False)
+        except Exception:
+            pass
 
     def _render_answer_segments(self, segments: list[AnswerSegment], fallback_answer: str = "") -> Text:
+        tc = self.theme_colors
         if segments:
             out = Text()
             for i, seg in enumerate(segments):
@@ -592,13 +751,13 @@ class PaperQATui(App):
                 if underline and claim_id in self.claim_color_map:
                     style = Style(color=self.claim_color_map[claim_id], underline=True, bold=True)
                 else:
-                    style = Style(color="#4a5568")
+                    style = Style(color=tc["fg_dim"])
                 sep = " " if i > 0 else ""
                 out.append(sep + seg.text, style=style)
             return out
         if fallback_answer:
-            return Text(fallback_answer, style=Style(color="#4a5568"))
-        return Text("(no answer)", style=Style(color="#666"))
+            return Text(fallback_answer, style=Style(color=tc["fg_dim"]))
+        return Text("(no answer)", style=Style(color=tc["fg_dim"]))
 
     def set_papers(self, papers: list[PaperDocument]) -> None:
         self.papers = papers
@@ -647,9 +806,9 @@ class PaperQATui(App):
             preview = sentences[0] if sentences else self.trim(top_c.quote, 90)
 
             label = Text()
-            label.append(f"{self.trim(top_c.paper_title, 36)}\n", style="bold #3344cc")
-            label.append(f"  {top_c.year} · p. {top_c.page} · {top_c.section}\n", style="#4a5568")
-            label.append(f"  \"{self.trim(preview, 62)}\"", style="italic #4a5568")
+            label.append(f"{self.trim(top_c.paper_title, 36)}\n", style="bold #7aa2f7")
+            label.append(f"  {top_c.year} · p. {top_c.page} · {top_c.section}\n", style="#565f89")
+            label.append(f"  \"{self.trim(preview, 62)}\"", style="italic #565f89")
             item_id = f"ref-{self.references_refresh_nonce}-{paper_id}"
             self.references_items[item_id] = paper_id
             references_list.append(ListItem(Static(label), id=item_id))
@@ -687,7 +846,13 @@ class PaperQATui(App):
         if not claims_for_paper:
             self.query_one("#chunk-detail-content", Static).update("No claims from the current answer are mapped to this paper.")
         else:
+            seen_claim_ids: set[int] = set()
             for claim in sorted(claims_for_paper, key=lambda c: c.claim_id):
+                # Skip duplicate claims (same claim can match via multiple citation_ids)
+                if claim.claim_id in seen_claim_ids:
+                    continue
+                seen_claim_ids.add(claim.claim_id)
+
                 color = self.claim_color_map.get(claim.claim_id, "#4a5568")
                 preview = self.trim(claim.text, 90)
 
@@ -726,25 +891,25 @@ class PaperQATui(App):
             evidence_panels.append(
                 Panel(
                     Group(
-                        Text(f"p. {c.page} · {c.section} · score {c.score:.3f}", style=Style(color="#4a5568", bold=True)),
+                        Text(f"p. {c.page} · {c.section} · score {c.score:.3f}", style=Style(color="#565f89", bold=True)),
                         Text("\nSentences preview (from evidence text):", style=Style(bold=True)),
                         sent_list,
                         Text("\nEvidence chunk (truncated):", style=Style(bold=True)),
                         Text(self.trim(c.quote, 1600)),
                     ),
-                    border_style="#e0e0e0",
+                    border_style="#3b4261",
                 )
             )
 
         content = Group(
-            Text(title, style=Style(bold=True, color="#3344cc")),
+            Text(title, style=Style(bold=True, color="#7aa2f7")),
             Text(f"{authors} · {year}"),
             Text(f"DOI: {citations_for_paper[0].doi or 'None'}"),
             Text(f"Citation chain position: {self.active_citation_index + 1}/{len(self.citation_chain)}" if self.citation_chain else ""),
             Text("\nSupporting evidence (click a Claim below to underline answer parts):", style=Style(bold=True)),
             *evidence_panels,
         )
-        self.query_one("#chunk-detail-content", Static).update(Panel(content, border_style="#e0e0e0"))
+        self.query_one("#chunk-detail-content", Static).update(Panel(content, border_style="#3b4261"))
 
     def show_claim_detail(self, claim_id: int) -> None:
         if not self.structured_answer:
@@ -805,11 +970,11 @@ class PaperQATui(App):
             return
 
         content = Group(
-            Text(title, style=Style(bold=True, color="#3344cc")),
+            Text(title, style=Style(bold=True, color="#7aa2f7")),
             Text(f"{authors} · {year}"),
             *panels,
         )
-        self.query_one("#chunk-detail-content", Static).update(Panel(content, border_style="#e0e0e0"))
+        self.query_one("#chunk-detail-content", Static).update(Panel(content, border_style="#3b4261"))
 
     def show_paper_detail(self, paper: PaperDocument) -> None:
         # Bottom-right list: project introspection
@@ -823,7 +988,7 @@ class PaperQATui(App):
                 break
 
         detail = Group(
-            Text(paper.title, style=Style(bold=True, color="#3344cc")),
+            Text(paper.title, style=Style(bold=True, color="#7aa2f7")),
             Text(f"{paper.authors} · {paper.year}"),
             Text(f"Pages: {paper.page_count}"),
             Text(f"Path: {paper.file_path}"),
@@ -836,13 +1001,13 @@ class PaperQATui(App):
         self.active_claim_id = None
         self.query_one("#claim-list", ListView).clear()
         self.claim_items = {}
-        self.query_one("#chunk-detail-content", Static).update(Panel(detail, border_style="#e0e0e0"))
+        self.query_one("#chunk-detail-content", Static).update(Panel(detail, border_style="#3b4261"))
 
     def show_lineage_loading(self, paper: PaperDocument) -> None:
         self.active_lineage_items = []
         detail = Group(
-            Text("Searching Paper Lineage", style=Style(bold=True, color="#3344cc")),
-            Text(paper.title, style=Style(bold=True, color="#3344cc")),
+            Text("Searching Paper Lineage", style=Style(bold=True, color="#7aa2f7")),
+            Text(paper.title, style=Style(bold=True, color="#7aa2f7")),
             Text(f"{paper.authors} · {paper.year}"),
             Text("\nLineage lookup is running. This can take a little while because it searches prior, citing, and related papers."),
             Text("\nWhen it finishes, the lineage report will appear here and be saved under papers/lineage-*.json."),
@@ -859,25 +1024,25 @@ class PaperQATui(App):
         source_meta = f"{source.get('authors', 'Unknown')} · {source.get('year', 'n.d.')}"
         chart = self.build_lineage_flowchart(source_title, results)
 
-        flow = Tree(Text("Paper Lineage", style=Style(color="#3344cc", bold=True)), guide_style="#3344cc")
-        prior = flow.add(Text("Prior work feeding into this paper", style=Style(color="#7c3aed", bold=True)))
+        flow = Tree(Text("Paper Lineage", style=Style(color="#7aa2f7", bold=True)), guide_style="#7aa2f7")
+        prior = flow.add(Text("Prior work feeding into this paper", style=Style(color="#bb9af7", bold=True)))
         self.add_lineage_nodes(prior, results.get("prior_work", []), "No prior-work results.")
 
-        source_node = flow.add(Text(f"CURRENT PAPER: {self.trim(source_title, 90)}", style=Style(color="#3344cc", bold=True)))
-        source_node.add(Text(source_meta, style=Style(color="#4a5568")))
+        source_node = flow.add(Text(f"CURRENT PAPER: {self.trim(source_title, 90)}", style=Style(color="#7aa2f7", bold=True)))
+        source_node.add(Text(source_meta, style=Style(color="#565f89")))
         if source.get("doi"):
-            source_node.add(Text(f"DOI: {source.get('doi')}", style=Style(color="#4a5568")))
+            source_node.add(Text(f"DOI: {source.get('doi')}", style=Style(color="#565f89")))
 
-        citing = source_node.add(Text("Cited by / descendants", style=Style(color="#059669", bold=True)))
+        citing = source_node.add(Text("Cited by / descendants", style=Style(color="#9ece6a", bold=True)))
         self.add_lineage_nodes(citing, results.get("citing_work", []), "No citing-work results.")
 
-        related = source_node.add(Text("Related sibling papers", style=Style(color="#0891b2", bold=True)))
+        related = source_node.add(Text("Related sibling papers", style=Style(color="#7dcfff", bold=True)))
         self.add_lineage_nodes(related, results.get("related_work", []), "No related-work results.")
 
         content = Group(
-            Panel(Text(chart, style=Style(color="#1a1a2e")), title="Lineage Flowchart", border_style="#3344cc"),
+            Panel(Text(chart, style=Style(color="#c0caf5")), title="Lineage Flowchart", border_style="#3344cc"),
             flow,
-            Text("Press d to download the top lineage paper into papers/ and reindex it.", style=Style(color="#3344cc", bold=True)),
+            Text("Press d to download the top lineage paper into papers/ and reindex it.", style=Style(color="#7aa2f7", bold=True)),
             Text(f"Saved: {lineage.get('lineage_file', '')}"),
         )
         self.query_one("#claim-list", ListView).clear()
@@ -886,21 +1051,21 @@ class PaperQATui(App):
 
     def show_download_loading(self, title: str) -> None:
         detail = Group(
-            Text("Downloading Lineage Paper", style=Style(bold=True, color="#3344cc")),
-            Text(self.trim(title, 90), style=Style(bold=True, color="#3344cc")),
+            Text("Downloading Lineage Paper", style=Style(bold=True, color="#7aa2f7")),
+            Text(self.trim(title, 90), style=Style(bold=True, color="#7aa2f7")),
             Text("\nSaving PDF into papers/ and forcing a reindex so it appears in Papers In Project."),
         )
         self.query_one("#chunk-detail-content", Static).update(Panel(detail, title="Downloading", border_style="#3344cc"))
 
     def show_download_complete(self, path: Path, source_title: str) -> None:
         detail = Group(
-            Text("New Paper Added", style=Style(bold=True, color="#059669")),
-            Text(path.name, style=Style(bold=True, color="#3344cc")),
+            Text("New Paper Added", style=Style(bold=True, color="#9ece6a")),
+            Text(path.name, style=Style(bold=True, color="#7aa2f7")),
             Text(f"Downloaded from: {source_title}"),
             Text(f"Path: {path}"),
             Text("\nThe paper list has been reindexed. Ask a new question to search across the expanded paper set."),
         )
-        self.query_one("#chunk-detail-content", Static).update(Panel(detail, border_style="#059669"))
+        self.query_one("#chunk-detail-content", Static).update(Panel(detail, border_style="#9ece6a"))
 
     def flatten_lineage_items(self, results: dict) -> list[dict]:
         items = []
@@ -942,7 +1107,7 @@ class PaperQATui(App):
 
     def add_lineage_nodes(self, tree: Tree, items: list, empty_message: str) -> None:
         if not items:
-            tree.add(Text(empty_message, style=Style(color="#4a5568")))
+            tree.add(Text(empty_message, style=Style(color="#565f89")))
             return
         for idx, item in enumerate(items, start=1):
             item_title = self.trim(str(item.get("title") or "Untitled"), 90)
@@ -950,11 +1115,11 @@ class PaperQATui(App):
             url = str(item.get("url") or "")
             snippet = self.trim(str(item.get("snippet") or ""), 220)
             node = tree.add(Text(f"{idx}. {item_title}", style=Style(bold=True)))
-            node.add(Text(date, style=Style(color="#4a5568")))
+            node.add(Text(date, style=Style(color="#565f89")))
             if url:
                 node.add(Text(url, style=Style(color="blue", underline=True)))
             if snippet:
-                node.add(Text(snippet, style=Style(color="#4a5568")))
+                node.add(Text(snippet, style=Style(color="#565f89")))
 
     def split_sentences(self, text: str) -> list[str]:
         text = (text or "").strip()

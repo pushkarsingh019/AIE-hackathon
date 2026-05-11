@@ -503,6 +503,67 @@ class LocalPaperQA:
         except Exception:
             return ""
 
+    def stream_answer_with_claims(self, question: str, citations: list[PaperCitation]):
+        """Yield (token, full_so_far) tuples as the LLM streams its response."""
+        if not citations:
+            yield "", ""
+            return
+        evidence = "\n\n".join(
+            f"[{index}] Paper: {citation.paper_title}\n"
+            f"Authors: {citation.authors}\n"
+            f"Year: {citation.year}\n"
+            f"Page: {citation.page}\n"
+            f"Section: {citation.section}\n"
+            f"Quote: {citation.quote}"
+            for index, citation in enumerate(citations, start=1)
+        )
+        prompt = (
+            "Answer using only the supplied paper evidence. Return only valid JSON, with no markdown fences. "
+            "Split the answer into short answer_parts. Each answer part must be supported by exactly one claim_id. "
+            "Each claim must cite one or more evidence ids from the supplied evidence. If evidence is insufficient, "
+            "say that in one answer part and return an empty claims array.\n\n"
+            "JSON schema:\n"
+            "{\n"
+            "  \"answer_parts\": [{\"text\": \"answer sentence or clause\", \"claim_id\": 1}],\n"
+            "  \"claims\": [{\"id\": 1, \"claim\": \"short supported claim\", \"citation_ids\": [1]}]\n"
+            "}\n\n"
+            f"Question: {question}\n\nEvidence:\n{evidence}"
+        )
+        base_url = get_chat_url()
+        model = get_chat_model()
+        accumulated = ""
+        try:
+            with httpx.stream(
+                "POST",
+                f"{base_url.rstrip('/')}/chat/completions",
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.1,
+                    "max_tokens": 1100,
+                    "stream": True,
+                },
+                timeout=180,
+            ) as response:
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    data = line[6:]
+                    if data.strip() == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data)
+                        delta = chunk.get("choices", [{}])[0].get("delta", {})
+                        token = delta.get("content", "")
+                        if token:
+                            accumulated += token
+                            yield token, accumulated
+                    except (json.JSONDecodeError, IndexError, KeyError):
+                        continue
+        except Exception:
+            pass
+
     def _answer_with_claims_chat(self, question: str, citations: list[PaperCitation]) -> str:
         if not citations:
             return ""
