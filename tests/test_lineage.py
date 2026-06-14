@@ -165,3 +165,24 @@ def test_paper_lineage_legacy_only_mode(monkeypatch, tmp_path: Path):
     lineage = qa.paper_lineage(paper, limit=1)
     assert lineage["legacy_mode"] is True
     assert called["n"] == 1
+
+
+def test_lineage_download_does_not_use_unrelated_demo_fallback(monkeypatch, tmp_path: Path):
+    qa = LocalPaperQA(papers_dir=str(tmp_path), use_enhanced_lineage=False)
+    attempted_urls: list[str] = []
+
+    def fail_download(item: dict):
+        attempted_urls.append(str(item.get("url") or ""))
+        raise RuntimeError("not downloadable")
+
+    monkeypatch.setattr(qa, "download_lineage_paper", fail_download)
+
+    with pytest.raises(RuntimeError, match="No downloadable lineage PDF found"):
+        qa.download_first_available_lineage_paper(
+            [
+                {"title": "Candidate A", "url": "https://example.com/a"},
+                {"title": "Candidate B", "url": "https://example.com/b"},
+            ]
+        )
+
+    assert attempted_urls == ["https://example.com/a", "https://example.com/b"]

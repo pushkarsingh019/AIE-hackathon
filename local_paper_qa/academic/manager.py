@@ -1,3 +1,4 @@
+import logging
 import time
 from typing import List, Optional, Dict, Any
 from enum import Enum
@@ -5,6 +6,8 @@ from .base import AcademicAPIClient, AcademicPaper, LineageResult
 from .semantic_scholar import SemanticScholarClient
 from .crossref import CrossrefClient
 from .arxiv import ArxivClient
+
+logger = logging.getLogger(__name__)
 
 
 class APIClientType(Enum):
@@ -83,7 +86,7 @@ class AcademicAPIManager:
                     break
                     
             except Exception as e:
-                print(f"Error searching with {client_type.value}: {e}")
+                logger.warning("Search by title failed with %s: %s", client_type.value, e)
                 continue
         
         # Sort by confidence score and return top results
@@ -118,7 +121,7 @@ class AcademicAPIManager:
                     return paper
                     
             except Exception as e:
-                print(f"Error searching DOI with {client_type.value}: {e}")
+                logger.warning("Search by DOI failed with %s: %s", client_type.value, e)
                 continue
         
         return None
@@ -183,7 +186,7 @@ class AcademicAPIManager:
                     temporal_papers.extend(temporal)
                 
             except Exception as e:
-                print(f"Error getting lineage with {client_type.value}: {e}")
+                logger.warning("Enhanced lineage lookup failed with %s: %s", client_type.value, e)
                 continue
         
         # Remove duplicates and combine results
@@ -265,7 +268,8 @@ class AcademicAPIManager:
         try:
             papers = client.search_papers_by_query(query, limit)
             return papers
-        except:
+        except Exception as exc:
+            logger.debug("Methodological paper search failed: %s", exc)
             return []
     
     def _find_temporal_papers(self, client: AcademicAPIClient, year: Optional[int], limit: int) -> List[AcademicPaper]:
@@ -280,7 +284,8 @@ class AcademicAPIManager:
         try:
             papers = client.search_papers_by_query(query, limit)
             return papers
-        except:
+        except Exception as exc:
+            logger.debug("Temporal paper search failed: %s", exc)
             return []
     
     def _calculate_lineage_confidence(self, paper_lists: List[List[AcademicPaper]]) -> float:

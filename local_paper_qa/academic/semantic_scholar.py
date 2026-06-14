@@ -1,7 +1,10 @@
 import json
+import logging
 import re
 from typing import List, Optional, Dict, Any
 from .base import AcademicAPIClient, AcademicPaper
+
+logger = logging.getLogger(__name__)
 
 
 class SemanticScholarClient(AcademicAPIClient):
@@ -34,7 +37,7 @@ class SemanticScholarClient(AcademicAPIClient):
             return papers
             
         except Exception as e:
-            print(f"Semantic Scholar search error: {e}")
+            logger.warning("Semantic Scholar title search failed: %s", e)
             return []
     
     def search_paper_by_doi(self, doi: str) -> Optional[AcademicPaper]:
@@ -48,7 +51,7 @@ class SemanticScholarClient(AcademicAPIClient):
             data = self._make_request(url, params=params)
             return self._parse_paper_from_graph(data)
         except Exception as e:
-            print(f"Semantic Scholar DOI search error: {e}")
+            logger.warning("Semantic Scholar DOI search failed: %s", e)
             return None
     
     def get_citations(self, paper_id: str, limit: int = 50) -> List[AcademicPaper]:
@@ -74,7 +77,7 @@ class SemanticScholarClient(AcademicAPIClient):
             return papers
             
         except Exception as e:
-            print(f"Semantic Scholar citations error: {e}")
+            logger.warning("Semantic Scholar citations lookup failed: %s", e)
             return []
     
     def get_references(self, paper_id: str, limit: int = 50) -> List[AcademicPaper]:
@@ -99,7 +102,7 @@ class SemanticScholarClient(AcademicAPIClient):
             return papers
             
         except Exception as e:
-            print(f"Semantic Scholar references error: {e}")
+            logger.warning("Semantic Scholar references lookup failed: %s", e)
             return []
     
     def get_similar_papers(self, paper_id: str, limit: int = 10) -> List[AcademicPaper]:
@@ -125,7 +128,7 @@ class SemanticScholarClient(AcademicAPIClient):
             return list(unique_papers.values())[:limit]
             
         except Exception as e:
-            print(f"Semantic Scholar similar papers error: {e}")
+            logger.warning("Semantic Scholar similar papers lookup failed: %s", e)
             return []
     
     def search_papers_by_query(self, query: str, limit: int = 10) -> List[AcademicPaper]:
@@ -149,7 +152,7 @@ class SemanticScholarClient(AcademicAPIClient):
             return papers
             
         except Exception as e:
-            print(f"Semantic Scholar query search error: {e}")
+            logger.warning("Semantic Scholar query search failed: %s", e)
             return []
     
     def _parse_paper_from_search(self, data: Dict[str, Any]) -> Optional[AcademicPaper]:
@@ -189,7 +192,7 @@ class SemanticScholarClient(AcademicAPIClient):
             )
             
         except Exception as e:
-            print(f"Error parsing Semantic Scholar paper: {e}")
+            logger.warning("Error parsing Semantic Scholar paper: %s", e)
             return None
 
     def _normalize_paper_id(self, paper_id: str) -> str:
@@ -248,7 +251,7 @@ class SemanticScholarClient(AcademicAPIClient):
                 source="Semantic Scholar",
             )
         except Exception as e:
-            print(f"Error parsing Semantic Scholar paper: {e}")
+            logger.warning("Error parsing Semantic Scholar paper: %s", e)
             return None
     
     def _parse_citation_from_search(self, data: Dict[str, Any]) -> Optional[AcademicPaper]:

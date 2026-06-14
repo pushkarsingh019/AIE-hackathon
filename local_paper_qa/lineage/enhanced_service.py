@@ -1,4 +1,5 @@
 import json
+import logging
 import time
 from pathlib import Path
 from typing import List, Optional, Dict, Any
@@ -7,6 +8,8 @@ from datetime import datetime
 
 from ..academic.base import AcademicPaper, LineageResult
 from ..academic.manager import AcademicAPIManager, APIClientType
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -206,11 +209,12 @@ class EnhancedLineageService:
         """Generate data for lineage visualization."""
         nodes = []
         edges = []
-        
-        def add_node(node: LineageNode, parent_id: Optional[str] = None):
+
+        stack: list[tuple[LineageNode, str | None]] = [(lineage_graph, None)]
+        while stack:
+            node, parent_id = stack.pop()
             node_id = f"node_{len(nodes)}"
-            
-            # Add node
+
             nodes.append({
                 "id": node_id,
                 "title": node.paper.title,
@@ -222,8 +226,7 @@ class EnhancedLineageService:
                 "citation_count": node.paper.citations_count or 0,
                 "url": node.paper.url
             })
-            
-            # Add edge if there's a parent
+
             if parent_id:
                 edges.append({
                     "from": parent_id,
@@ -231,12 +234,8 @@ class EnhancedLineageService:
                     "relationship": node.node_type,
                     "strength": node.relationship_strength
                 })
-            
-            # Add children
-            for child in node.children:
-                add_node(child, node_id)
-        
-        add_node(lineage_graph)
+
+            stack.extend((child, node_id) for child in reversed(node.children))
         
         return {
             "nodes": nodes,
@@ -283,7 +282,7 @@ class EnhancedLineageService:
             return typed_nodes[:limit]
             
         except Exception as e:
-            print(f"Error finding lineage papers: {e}")
+            logger.warning("Error finding lineage papers in %s: %s", lineage_path, e)
             return []
     
     def get_lineage_summary(self, lineage_path: str) -> Dict[str, Any]:
@@ -310,7 +309,7 @@ class EnhancedLineageService:
             }
             
         except Exception as e:
-            print(f"Error getting lineage summary: {e}")
+            logger.warning("Error getting lineage summary from %s: %s", lineage_path, e)
             return {}
     
     def download_enhanced_lineage_paper(self, paper: AcademicPaper) -> Optional[Path]:
@@ -344,5 +343,5 @@ class EnhancedLineageService:
             return download_path
             
         except Exception as e:
-            print(f"Error downloading lineage paper: {e}")
+            logger.warning("Error downloading lineage paper %s: %s", paper.title, e)
             return None

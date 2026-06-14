@@ -1,9 +1,12 @@
 import json
+import logging
 import re
 import xml.etree.ElementTree as ET
 from typing import List, Optional, Dict, Any
 from urllib.parse import quote, urljoin
 from .base import AcademicAPIClient, AcademicPaper
+
+logger = logging.getLogger(__name__)
 
 
 class ArxivClient(AcademicAPIClient):
@@ -29,7 +32,7 @@ class ArxivClient(AcademicAPIClient):
             return self._parse_papers_from_xml(data)
             
         except Exception as e:
-            print(f"arXiv search error: {e}")
+            logger.warning("arXiv title search failed: %s", e)
             return []
     
     def search_paper_by_doi(self, doi: str) -> Optional[AcademicPaper]:
@@ -49,7 +52,7 @@ class ArxivClient(AcademicAPIClient):
             return papers[0] if papers else None
             
         except Exception as e:
-            print(f"arXiv DOI search error: {e}")
+            logger.warning("arXiv DOI search failed: %s", e)
             return None
     
     def get_citations(self, paper_id: str, limit: int = 50) -> List[AcademicPaper]:
@@ -81,7 +84,7 @@ class ArxivClient(AcademicAPIClient):
             return self._parse_papers_from_xml(data)
             
         except Exception as e:
-            print(f"arXiv citations error: {e}")
+            logger.warning("arXiv citations lookup failed: %s", e)
             return []
     
     def get_references(self, paper_id: str, limit: int = 50) -> List[AcademicPaper]:
@@ -92,7 +95,7 @@ class ArxivClient(AcademicAPIClient):
             return []
             
         except Exception as e:
-            print(f"arXiv references error: {e}")
+            logger.warning("arXiv references lookup failed: %s", e)
             return []
     
     def get_similar_papers(self, paper_id: str, limit: int = 10) -> List[AcademicPaper]:
@@ -120,7 +123,7 @@ class ArxivClient(AcademicAPIClient):
             return self._parse_papers_from_xml(data)
             
         except Exception as e:
-            print(f"arXiv similar papers error: {e}")
+            logger.warning("arXiv similar papers lookup failed: %s", e)
             return []
     
     def search_papers_by_query(self, query: str, limit: int = 10) -> List[AcademicPaper]:
@@ -138,7 +141,7 @@ class ArxivClient(AcademicAPIClient):
             return self._parse_papers_from_xml(data)
             
         except Exception as e:
-            print(f"arXiv query search error: {e}")
+            logger.warning("arXiv query search failed: %s", e)
             return []
     
     def get_paper_by_id(self, arxiv_id: str) -> Optional[AcademicPaper]:
@@ -164,7 +167,7 @@ class ArxivClient(AcademicAPIClient):
             return papers[0] if papers else None
             
         except Exception as e:
-            print(f"arXiv ID search error: {e}")
+            logger.warning("arXiv ID search failed: %s", e)
             return None
     
     def _parse_papers_from_xml(self, xml_data: str) -> List[AcademicPaper]:
@@ -188,7 +191,7 @@ class ArxivClient(AcademicAPIClient):
             return papers
             
         except Exception as e:
-            print(f"Error parsing arXiv papers: {e}")
+            logger.warning("Error parsing arXiv papers: %s", e)
             return []
     
     def _parse_paper_from_entry(self, entry, namespaces: Dict[str, str]) -> Optional[AcademicPaper]:
@@ -258,7 +261,7 @@ class ArxivClient(AcademicAPIClient):
             )
             
         except Exception as e:
-            print(f"Error parsing arXiv paper: {e}")
+            logger.warning("Error parsing arXiv paper: %s", e)
             return None
     
     def _extract_arxiv_id(self, url_or_id: str) -> Optional[str]:

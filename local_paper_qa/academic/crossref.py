@@ -1,7 +1,10 @@
 import json
+import logging
 import re
 from typing import List, Optional, Dict, Any
 from .base import AcademicAPIClient, AcademicPaper
+
+logger = logging.getLogger(__name__)
 
 
 class CrossrefClient(AcademicAPIClient):
@@ -27,7 +30,7 @@ class CrossrefClient(AcademicAPIClient):
             return self._parse_papers_from_response(data)
             
         except Exception as e:
-            print(f"Crossref search error: {e}")
+            logger.warning("Crossref title search failed: %s", e)
             return []
     
     def search_paper_by_doi(self, doi: str) -> Optional[AcademicPaper]:
@@ -51,7 +54,7 @@ class CrossrefClient(AcademicAPIClient):
             return paper
             
         except Exception as e:
-            print(f"Crossref DOI search error: {e}")
+            logger.warning("Crossref DOI search failed: %s", e)
             return None
     
     def get_citations(self, paper_id: str, limit: int = 50) -> List[AcademicPaper]:
@@ -77,7 +80,7 @@ class CrossrefClient(AcademicAPIClient):
             return self._parse_papers_from_response(data)
             
         except Exception as e:
-            print(f"Crossref citations error: {e}")
+            logger.warning("Crossref citations lookup failed: %s", e)
             return []
     
     def get_references(self, paper_id: str, limit: int = 50) -> List[AcademicPaper]:
@@ -88,7 +91,7 @@ class CrossrefClient(AcademicAPIClient):
             return []
             
         except Exception as e:
-            print(f"Crossref references error: {e}")
+            logger.warning("Crossref references lookup failed: %s", e)
             return []
     
     def get_similar_papers(self, paper_id: str, limit: int = 10) -> List[AcademicPaper]:
@@ -113,7 +116,7 @@ class CrossrefClient(AcademicAPIClient):
             return self._parse_papers_from_response(data)
             
         except Exception as e:
-            print(f"Crossref similar papers error: {e}")
+            logger.warning("Crossref similar papers lookup failed: %s", e)
             return []
     
     def search_papers_by_query(self, query: str, limit: int = 10) -> List[AcademicPaper]:
@@ -129,7 +132,7 @@ class CrossrefClient(AcademicAPIClient):
             return self._parse_papers_from_response(data)
             
         except Exception as e:
-            print(f"Crossref query search error: {e}")
+            logger.warning("Crossref query search failed: %s", e)
             return []
     
     def _parse_papers_from_response(self, data: Dict[str, Any]) -> List[AcademicPaper]:
@@ -147,7 +150,7 @@ class CrossrefClient(AcademicAPIClient):
             return papers
             
         except Exception as e:
-            print(f"Error parsing Crossref papers: {e}")
+            logger.warning("Error parsing Crossref papers: %s", e)
             return []
     
     def _parse_paper_from_item(self, item: Dict[str, Any]) -> Optional[AcademicPaper]:
@@ -220,5 +223,5 @@ class CrossrefClient(AcademicAPIClient):
             )
             
         except Exception as e:
-            print(f"Error parsing Crossref paper: {e}")
+            logger.warning("Error parsing Crossref paper: %s", e)
             return None

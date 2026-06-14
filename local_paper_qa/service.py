@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import hashlib
 import json
+import logging
 import math
 import os
 import re
@@ -13,6 +13,8 @@ import httpx
 from pydantic import BaseModel, Field
 
 from local_paper_qa.citations import format_apa
+from local_paper_qa.config.manager import ConfigManager
+from local_paper_qa.extraction import extract_paper
 from local_paper_qa.settings import (
     get_chat_model,
     get_chat_url,
@@ -22,6 +24,8 @@ from local_paper_qa.settings import (
 )
 from local_paper_qa.models import AnswerSegment, PaperChunk, PaperCitation, PaperDocument, StructuredAnswer, SupportedClaim
 from local_paper_qa.lineage.enhanced_service import EnhancedLineageService, EnhancedPaperDocument
+
+logger = logging.getLogger(__name__)
 
 
 class AskResult(BaseModel):
@@ -45,7 +49,8 @@ class LocalPaperQA:
         if use_enhanced_lineage is None:
             try:
                 self.use_enhanced_lineage = ConfigManager().get_config().api.enable_enhanced_lineage
-            except Exception:
+            except Exception as exc:
+                logger.warning("Could not read enhanced lineage config; enabling enhanced lineage: %s", exc)
                 self.use_enhanced_lineage = True
         else:
             self.use_enhanced_lineage = use_enhanced_lineage
@@ -75,7 +80,8 @@ class LocalPaperQA:
         from local_paper_qa.vector_store import VectorStore
         try:
             self.vector_store = VectorStore(self.vector_db_path)
-        except Exception:
+        except Exception as exc:
+            logger.debug("Vector store unavailable at %s: %s", self.vector_db_path, exc)
             self.vector_store = None
 
     def list_papers(self) -> list[PaperDocument]:
@@ -140,15 +146,16 @@ class LocalPaperQA:
                     source = report.get("source_paper", {})
                     graph = report.get("lineage_graph", {})
 
-                    def extract_nodes(node: dict) -> list[dict]:
-                        out = []
-                        if not node:
-                            return out
-                        if node.get("node_type") and node.get("paper"):
-                            out.append(node)
-                        for child in node.get("children", []) or []:
-                            out.extend(extract_nodes(child))
-                        return out
+                    def extract_nodes(root: dict) -> list[dict]:
+                        nodes: list[dict] = []
+                        stack = [root] if root else []
+                        while stack:
+                            node = stack.pop()
+                            if node.get("node_type") and node.get("paper"):
+                                nodes.append(node)
+                            children = node.get("children", []) or []
+                            stack.extend(reversed([child for child in children if isinstance(child, dict)]))
+                        return nodes
 
                     nodes = extract_nodes(graph)
                     def make_item(n: dict) -> dict:
@@ -192,7 +199,7 @@ class LocalPaperQA:
                     return self._legacy_paper_lineage(paper, limit)
                     
             except Exception as e:
-                print(f"Enhanced lineage error: {e}, falling back to legacy method")
+                logger.warning("Enhanced lineage failed; falling back to legacy method: %s", e)
                 return self._legacy_paper_lineage(paper, limit)
         else:
             # Use legacy Exa-based lineage
@@ -297,17 +304,11 @@ class LocalPaperQA:
             except Exception as e:
                 errors.append(str(e))
 
-        demo_item = {
-            "title": "Playing Atari with Deep Reinforcement Learning",
-            "url": "https://arxiv.org/pdf/1312.5602.pdf",
-        }
-        try:
-            return self.download_lineage_paper(demo_item), "Demo fallback: Playing Atari with Deep Reinforcement Learning"
-        except Exception as e:
-            errors.append(str(e))
-        raise RuntimeError("No downloadable lineage PDF found. " + " | ".join(errors[:3]))
+        detail = " | ".join(errors[:3])
+        suffix = f" {detail}" if detail else ""
+        raise RuntimeError(f"No downloadable lineage PDF found.{suffix}")
     
-    def download_enhanced_lineage_paper(self, item: dict) -> Optional[Path]:
+    def download_enhanced_lineage_paper(self, item: dict) -> Path | None:
         """Download a paper using enhanced lineage system."""
         if not self.use_enhanced_lineage or not hasattr(self, 'enhanced_lineage_service'):
             # Fall back to legacy method
@@ -332,10 +333,10 @@ class LocalPaperQA:
             return self.enhanced_lineage_service.download_enhanced_lineage_paper(paper)
             
         except Exception as e:
-            print(f"Enhanced download error: {e}, falling back to legacy method")
+            logger.warning("Enhanced download failed; falling back to legacy method: %s", e)
             return self.download_lineage_paper(item)
     
-    def download_first_enhanced_lineage_paper(self, items: list[dict]) -> tuple[Optional[Path], str]:
+    def download_first_enhanced_lineage_paper(self, items: list[dict]) -> tuple[Path | None, str]:
         """Download the first available paper using enhanced lineage system."""
         errors = []
         for item in items:
@@ -362,7 +363,7 @@ class LocalPaperQA:
         try:
             return self.enhanced_lineage_service.get_lineage_summary(lineage_path)
         except Exception as e:
-            print(f"Error getting enhanced lineage summary: {e}")
+            logger.warning("Could not read enhanced lineage summary from %s: %s", lineage_path, e)
             return {}
     
     def find_lineage_papers_by_type(self, lineage_path: str, paper_type: str, limit: int = 5) -> list[dict]:
@@ -373,7 +374,7 @@ class LocalPaperQA:
         try:
             return self.enhanced_lineage_service.find_lineage_papers_by_type(lineage_path, paper_type, limit)
         except Exception as e:
-            print(f"Error finding lineage papers by type: {e}")
+            logger.warning("Could not find lineage papers by type %s in %s: %s", paper_type, lineage_path, e)
             return []
 
     def _pdf_url_candidates(self, url: str) -> list[str]:
@@ -389,7 +390,7 @@ class LocalPaperQA:
             candidates.insert(0, f"https://openreview.net/pdf?{parsed.query}")
         return list(dict.fromkeys(candidates))
     
-    def _extract_year_from_date(self, date_str: str) -> Optional[int]:
+    def _extract_year_from_date(self, date_str: str) -> int | None:
         """Extract year from various date formats."""
         if not date_str:
             return None
@@ -489,7 +490,8 @@ class LocalPaperQA:
             )
             response.raise_for_status()
             return [float(v) for v in response.json().get("data", [{}])[0].get("embedding", [])]
-        except Exception:
+        except Exception as exc:
+            logger.debug("Embedding request failed: %s", exc)
             return []
 
     def _answer_with_chat(self, question: str, citations: list[PaperCitation]) -> str:
@@ -519,7 +521,8 @@ class LocalPaperQA:
             )
             response.raise_for_status()
             return response.json().get("choices", [{}])[0].get("message", {}).get("content", "")
-        except Exception:
+        except Exception as exc:
+            logger.debug("Chat completion request failed: %s", exc)
             return ""
 
     def stream_answer_with_claims(self, question: str, citations: list[PaperCitation]):
@@ -580,7 +583,8 @@ class LocalPaperQA:
                             yield token, accumulated
                     except (json.JSONDecodeError, IndexError, KeyError):
                         continue
-        except Exception:
+        except Exception as exc:
+            logger.debug("Streaming chat completion failed: %s", exc)
             pass
 
     def _answer_with_claims_chat(self, question: str, citations: list[PaperCitation]) -> str:
@@ -622,7 +626,8 @@ class LocalPaperQA:
             )
             response.raise_for_status()
             return response.json().get("choices", [{}])[0].get("message", {}).get("content", "")
-        except Exception:
+        except Exception as exc:
+            logger.debug("Structured chat completion request failed: %s", exc)
             return ""
 
     def _parse_structured_answer(self, raw_answer: str, citations: list[PaperCitation]) -> StructuredAnswer | None:
@@ -696,132 +701,38 @@ class LocalPaperQA:
         return "\n".join(lines)
 
     def _load_paper(self, path: Path) -> PaperDocument:
-        paper_id = hashlib.sha1(str(path).encode()).hexdigest()[:12]
-        pages, pdf_meta = self._extract_pdf_pages(path)
-        title = pdf_meta.get("Title") or path.stem.replace("_", " ")
-        meta = self._extract_metadata(path, pages, pdf_meta)
-        chunks = self._build_chunks(paper_id, title, path.name, pages)
+        extracted = extract_paper(path)
+        paper = extracted.paper
+        chunks = [
+            PaperChunk(
+                chunk_id=span.span_id,
+                paper_id=span.paper_id,
+                paper_title=span.paper_title,
+                page=span.page,
+                section=span.section,
+                text=span.quote,
+                metadata={
+                    **span.metadata,
+                    "extraction_quality": extracted.status.quality.value,
+                    "extraction_message": extracted.status.message,
+                },
+            )
+            for span in extracted.spans
+        ]
         return PaperDocument(
-            paper_id=paper_id,
-            file_path=str(path),
-            title=meta.get("title") or title,
-            authors=meta.get("authors") or "Unknown",
-            year=meta.get("year") or "n.d.",
-            venue=meta.get("venue") or "",
-            doi=meta.get("doi") or "",
-            abstract=meta.get("abstract") or "",
-            page_count=len(pages),
+            paper_id=paper.paper_id,
+            file_path=paper.file_path,
+            title=paper.title,
+            authors=paper.authors,
+            year=paper.year,
+            venue=paper.venue,
+            doi=paper.doi,
+            abstract=paper.abstract,
+            page_count=extracted.page_count,
+            extraction_quality=extracted.status.quality.value,
+            extraction_message=extracted.status.message,
             chunks=chunks,
         )
-
-    def _extract_pdf_pages(self, path: Path) -> tuple[list[str], dict[str, str]]:
-        # Use the unified parser that prefers Docling and falls back to PyPDF.
-        from .parser import extract_pages
-        # Extract page‑wise text using the helper.
-        pages = extract_pages(path)
-        # For metadata we still rely on PyPDF as Docling does not expose it directly.
-        from pypdf import PdfReader
-        reader = PdfReader(str(path))
-        metadata = {str(k).lstrip("/"): str(v) for k, v in (reader.metadata or {}).items()}
-        return pages, metadata
-
-    def _extract_metadata(self, path: Path, pages: list[str], pdf_meta: dict[str, str]) -> dict[str, str]:
-        first_page = pages[0] if pages else ""
-        meta = {
-            "title": pdf_meta.get("Title") or self._guess_title(path, first_page),
-            "authors": pdf_meta.get("Author") or self._guess_authors(first_page),
-            "year": pdf_meta.get("Published") or pdf_meta.get("Date") or self._guess_year(first_page),
-            "venue": pdf_meta.get("Book") or pdf_meta.get("Subject") or self._guess_venue(first_page),
-            "doi": pdf_meta.get("doi") or self._guess_doi("\n".join(pages[:2])),
-            "abstract": pdf_meta.get("Description-Abstract") or self._guess_abstract(first_page),
-        }
-
-        # If we couldn't extract DOI or title confidently from PDF metadata,
-        # fall back to a lightweight text-based extractor.
-        try:
-            doi_missing = not meta.get("doi")
-            authors_unknown = meta.get("authors", "").strip().lower() in {"unknown", "unknown author"}
-            if doi_missing or authors_unknown:
-                from local_paper_qa.metadata.enhanced_extractor import EnhancedMetadataExtractor
-
-                extractor = EnhancedMetadataExtractor()
-                sample_text = "\n".join(pages[:5])
-                extracted = extractor.extract_enhanced_metadata(sample_text, path)
-
-                # Only override when extractor looks reasonably confident.
-                if extracted.confidence_score >= 0.5:
-                    if doi_missing and extracted.doi:
-                        meta["doi"] = extracted.doi
-                    if (not meta.get("title") or meta["title"] == self._guess_title(path, first_page)) and extracted.title:
-                        meta["title"] = extracted.title
-                    if authors_unknown and extracted.authors:
-                        meta["authors"] = ", ".join(extracted.authors)
-                    if meta.get("year") in {"n.d.", ""} and extracted.year is not None:
-                        meta["year"] = str(extracted.year)
-                    if meta.get("venue") in {"", "Unknown"} and extracted.venue:
-                        meta["venue"] = extracted.venue
-                    if meta.get("abstract") in {"", ""} and extracted.abstract:
-                        meta["abstract"] = extracted.abstract
-        except Exception:
-            # Keep legacy metadata if enhanced extraction fails.
-            pass
-
-        return meta
-
-    def _build_chunks(self, paper_id: str, title: str, source_name: str, pages: list[str]) -> list[PaperChunk]:
-        chunks: list[PaperChunk] = []
-        for page_number, page_text in enumerate(pages, start=1):
-            section = "Unknown section"
-            for para_index, paragraph in enumerate(self._paragraphs(page_text), start=1):
-                heading = self._section_heading(paragraph)
-                if heading:
-                    section = heading
-                    continue
-                if len(paragraph.split()) < 20:
-                    continue
-                chunks.append(PaperChunk(f"{paper_id}-p{page_number}-{para_index}", paper_id, title, page_number, section, paragraph, metadata={"source": source_name}))
-        return chunks
-
-    def _paragraphs(self, text: str) -> list[str]:
-        # Clean up hyphenation at line ends and collapse whitespace
-        cleaned_lines = []
-        for line in text.splitlines():
-            stripped = line.rstrip()
-            # Remove hyphenation caused by PDF extraction
-            if stripped.endswith("-"):
-                cleaned_lines.append(stripped[:-1])
-            else:
-                cleaned_lines.append(re.sub(r"\s+", " ", stripped).strip())
-        # Rejoin into paragraphs separated by blank lines
-        paragraphs: list[str] = []
-        buffer: list[str] = []
-        for line in cleaned_lines:
-            if not line:
-                if buffer:
-                    paragraphs.append(" ".join(buffer))
-                    buffer = []
-                continue
-            buffer.append(line)
-            if sum(len(part.split()) for part in buffer) >= 150:
-                paragraphs.append(" ".join(buffer))
-                buffer = []
-        if buffer:
-            paragraphs.append(" ".join(buffer))
-        return paragraphs
-
-    def _section_heading(self, text: str) -> str:
-        text = text.strip()
-        if len(text) > 90 or len(text.split()) > 15:
-            return ""
-        if re.match(r"^(\d+(\.\d+)*\s+)?(abstract|introduction|background|related work|methods?|methodology|experiments?|results?|discussion|limitations?|conclusion|references|acknowledgments|supplementary|appendix)\b", text, re.I):
-            return text[:80]
-        # Detect numbered section titles like "1. Introduction", "2.1 Methods"
-        if re.match(r"^\d+(\.\d+)*\s+[A-Z][a-zA-Z\s.,:;]+", text):
-            return text[:80]
-        # All-caps headings (common in papers)
-        if re.match(r"^[A-Z][A-Z\s.,:;]{10,}$", text):
-            return text[:80]
-        return ""
 
     def _load_index_if_fresh(self) -> list[PaperDocument] | None:
         if not self.index_file.exists():
@@ -880,7 +791,7 @@ class LocalPaperQA:
                     }))
         self.vector_store.insert_many(items)
 
-    def _query_vector_store(self, query_embedding: List[float], limit: int = 10) -> List[str]:
+    def _query_vector_store(self, query_embedding: list[float], limit: int = 10) -> list[str]:
         """Return chunk IDs from the vector store for the top-K results."""
         if self.vector_store is None:
             return []
@@ -931,26 +842,3 @@ class LocalPaperQA:
         q = set(re.findall(r"[a-z0-9]+", question.lower()))
         t = set(re.findall(r"[a-z0-9]+", chunk.text.lower()))
         return len(q & t) / len(q | t) if q and t else 0.0
-
-    def _guess_title(self, path: Path, text: str) -> str:
-        return next((line.strip() for line in text.splitlines() if line.strip()), path.stem.replace("_", " "))[:160]
-
-    def _guess_authors(self, text: str) -> str:
-        lines = [line.strip() for line in text.splitlines() if line.strip()]
-        return lines[1][:160] if len(lines) > 1 else "Unknown"
-
-    def _guess_year(self, text: str) -> str:
-        match = re.search(r"(19|20)\d{2}", text)
-        return match.group(0) if match else "n.d."
-
-    def _guess_venue(self, text: str) -> str:
-        match = re.search(r"(proceedings|journal|conference|transactions|letters).*", text, re.I)
-        return match.group(0)[:160] if match else ""
-
-    def _guess_doi(self, text: str) -> str:
-        match = re.search(r"10\.\d{4,9}/[-._;()/:A-Z0-9]+", text, re.I)
-        return match.group(0) if match else ""
-
-    def _guess_abstract(self, text: str) -> str:
-        match = re.search(r"abstract\s*(.*?)(?:\n\s*[A-Z][A-Za-z ]{2,40}\n|\Z)", text, re.I | re.S)
-        return re.sub(r"\s+", " ", match.group(1)).strip()[:1000] if match else ""

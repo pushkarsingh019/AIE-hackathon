@@ -1,7 +1,10 @@
 import os
+import logging
 from pathlib import Path
 from typing import Dict, Any, Optional
 from dataclasses import dataclass, asdict
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -73,7 +76,7 @@ class ConfigManager:
             with open(config_path, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except Exception as e:
-            print(f"Error loading config file: {e}")
+            logger.warning("Error loading config file %s: %s", config_path, e)
             return None
     
     def _load_api_config(self, file_config: Optional[Dict[str, Any]]) -> APIConfig:
@@ -128,7 +131,7 @@ class ConfigManager:
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(config_dict, f, indent=2, ensure_ascii=False)
         except Exception as e:
-            print(f"Error saving config file: {e}")
+            logger.warning("Error saving config file %s: %s", self.config_file, e)
     
     def get_api_key(self, service: str) -> Optional[str]:
         """Get API key for a specific service."""
@@ -200,6 +203,6 @@ class ConfigManager:
             import json
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(sample_config, f, indent=2, ensure_ascii=False)
-            print(f"Sample configuration created at {self.config_file}")
+            logger.info("Sample configuration created at %s", self.config_file)
         except Exception as e:
-            print(f"Error creating sample config: {e}")
+            logger.warning("Error creating sample config %s: %s", self.config_file, e)

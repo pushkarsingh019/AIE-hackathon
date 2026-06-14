@@ -42,6 +42,8 @@ class PaperDocument:
     doi: str = ""
     abstract: str = ""
     page_count: int = 0
+    extraction_quality: str = "unknown"
+    extraction_message: str = ""
     chunks: list[PaperChunk] = field(default_factory=list)
 
 
