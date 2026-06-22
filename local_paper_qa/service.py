@@ -14,18 +14,33 @@ from pydantic import BaseModel, Field
 
 from local_paper_qa.citations import format_apa
 from local_paper_qa.config.manager import ConfigManager
+from local_paper_qa.corpus_store import CorpusStore, RetrievalRepresentation
 from local_paper_qa.extraction import extract_paper
+from local_paper_qa.model_clients import ChatClient, EmbeddingProvider, create_chat_client, create_embedding_provider, create_vision_client
 from local_paper_qa.settings import (
     get_chat_model,
+    get_chat_provider,
     get_chat_url,
     get_embedding_model,
-    get_embedding_url,
+    get_embedding_provider,
+    get_figure_indexing,
+    get_figure_indexing_max_candidates,
+    get_gemini_embedding_model,
+    get_indexing_profile,
+    get_max_citations,
+    get_multimodal_model,
+    get_openai_embedding_model,
     get_papers_dir,
 )
 from local_paper_qa.models import AnswerSegment, PaperChunk, PaperCitation, PaperDocument, StructuredAnswer, SupportedClaim
 from local_paper_qa.lineage.enhanced_service import EnhancedLineageService, EnhancedPaperDocument
+from local_paper_qa.visuals import FigureCandidate, describe_figure_candidates, detect_figure_candidates
 
 logger = logging.getLogger(__name__)
+
+
+class IndexingError(RuntimeError):
+    """Raised when the Extracted Corpus cannot be indexed."""
 
 
 class AskResult(BaseModel):
@@ -43,6 +58,10 @@ class LocalPaperQA:
         self.papers_dir.mkdir(parents=True, exist_ok=True)
         self.index_dir = self.papers_dir / ".research_index"
         self.index_file = self.index_dir / "index.json"
+        self.corpus_db_path = self.index_dir / "corpus.db"
+        self.corpus_store = CorpusStore(self.corpus_db_path)
+        self._embedding_provider: EmbeddingProvider | None = None
+        self._chat_client: ChatClient | None = None
         self.vector_db_path = self.index_dir / "vectors.db"
         
         # Enhanced lineage service
@@ -71,9 +90,16 @@ class LocalPaperQA:
         and must match the embedding endpoint/model.
         """
 
+        embedding_model = get_embedding_model()
+        embedding_provider = get_embedding_provider().strip().lower()
+        if embedding_provider in {"gemini", "google"} and not embedding_model.startswith("gemini-"):
+            embedding_model = get_gemini_embedding_model()
+        if embedding_provider in {"openai", "auto"} and not embedding_model.startswith("text-embedding-"):
+            embedding_model = get_openai_embedding_model()
+
         return {
-            "embedding_url": get_embedding_url(),
-            "embedding_model": get_embedding_model(),
+            "embedding_provider": get_embedding_provider(),
+            "embedding_model": embedding_model,
         }
 
     def _init_vector_store(self) -> None:
@@ -101,9 +127,8 @@ class LocalPaperQA:
                 papers.append(cached)
                 continue
             paper = self._load_paper(path)
-            for chunk in paper.chunks:
-                chunk.metadata["embedding"] = self.embed_text(chunk.text[:2000])
             papers.append(paper)
+        self._embed_and_persist_papers(papers)
         self._save_index(papers)
         self._save_vector_store(papers)
         return papers
@@ -426,6 +451,119 @@ class LocalPaperQA:
     def answer_from_evidence(self, question: str, citations: list[PaperCitation]) -> str:
         return self._answer_with_chat(question, citations) or self._fallback_answer(question, citations)
 
+    def _get_chat_client(self) -> ChatClient:
+        if self._chat_client is None:
+            self._chat_client = create_chat_client()
+        return self._chat_client
+
+    def _get_embedding_provider(self) -> EmbeddingProvider:
+        if self._embedding_provider is None:
+            self._embedding_provider = create_embedding_provider()
+        return self._embedding_provider
+
+    def _embed_and_persist_papers(self, papers: list[PaperDocument]) -> None:
+        profile = get_indexing_profile()
+        self.corpus_store.upsert_papers(papers, self._current_file_state(), profile=profile)
+        self._index_figure_notes_if_enabled(papers, profile)
+        representations = self.corpus_store.list_representations([paper.paper_id for paper in papers])
+        if not representations:
+            return
+
+        provider = self._get_embedding_provider()
+        info = provider.info
+        missing = self.corpus_store.missing_embeddings(
+            representations,
+            provider=info.provider,
+            model=info.model,
+            dimension=info.dimension,
+            profile=info.profile,
+        )
+        try:
+            embeddings = provider.embed_documents([representation.content for representation in missing])
+        except Exception as exc:
+            raise IndexingError(
+                f"{info.provider} embedding indexing failed. The provider returned an error while embedding the "
+                "Extracted Corpus. Check the provider API key, quota, and model access. For cheaper test runs, "
+                "keep indexing_profile = \"fast\" and reuse the cached index."
+            ) from exc
+        if len(embeddings) != len(missing):
+            raise IndexingError(
+                f"Embedding provider returned {len(embeddings)} embeddings for {len(missing)} inputs."
+            )
+        self.corpus_store.upsert_embeddings(
+            missing,
+            embeddings,
+            provider=info.provider,
+            model=info.model,
+            dimension=info.dimension,
+            profile=info.profile,
+        )
+
+        quote_representations = [
+            representation
+            for representation in representations
+            if representation.representation_type == "quote"
+        ]
+        stored_embeddings = self.corpus_store.load_embeddings(
+            [representation.representation_id for representation in quote_representations],
+            provider=info.provider,
+            model=info.model,
+            dimension=info.dimension,
+            profile=info.profile,
+        )
+        quote_embeddings = {}
+        for representation in quote_representations:
+            embedding = stored_embeddings.get(representation.representation_id)
+            if embedding:
+                quote_embeddings[representation.source_id] = embedding
+        for paper in papers:
+            for chunk in paper.chunks:
+                embedding = quote_embeddings.get(chunk.chunk_id)
+                if embedding:
+                    chunk.metadata["embedding"] = embedding
+
+    def _index_figure_notes_if_enabled(self, papers: list[PaperDocument], profile: str) -> None:
+        if profile != "deep_figures" or get_figure_indexing().strip().lower() == "off":
+            return
+
+        candidate_limit = get_figure_indexing_max_candidates()
+        remaining = candidate_limit if candidate_limit > 0 else None
+        selected_candidates: dict[str, list[FigureCandidate]] = {}
+        for paper in papers:
+            candidates = detect_figure_candidates(paper)
+            if remaining is not None:
+                candidates = candidates[:remaining]
+                remaining -= len(candidates)
+            selected_candidates[paper.paper_id] = candidates
+
+        if not any(selected_candidates.values()):
+            for paper in papers:
+                self.corpus_store.replace_figure_notes(paper.paper_id, [])
+            return
+
+        try:
+            vision_client = create_vision_client()
+            model = getattr(vision_client, "model", get_multimodal_model())
+            artifact_root = self.index_dir / "artifacts"
+            for paper in papers:
+                candidates = selected_candidates[paper.paper_id]
+                if not candidates:
+                    self.corpus_store.replace_figure_notes(paper.paper_id, [])
+                    continue
+                notes = describe_figure_candidates(
+                    paper,
+                    artifact_root,
+                    vision_client,
+                    model=model,
+                    candidates=candidates,
+                )
+                self.corpus_store.replace_figure_notes(paper.paper_id, notes)
+        except Exception as exc:
+            raise IndexingError(
+                "Figure indexing failed while rendering pages or calling the vision provider. "
+                "Use indexing_profile = \"fast\" or \"deep\" for text-only indexing, or set figure_indexing = \"off\"."
+            ) from exc
+
     def answer_with_claims(self, question: str, citations: list[PaperCitation]) -> StructuredAnswer:
         raw_answer = self._answer_with_claims_chat(question, citations)
         structured = self._parse_structured_answer(raw_answer, citations)
@@ -436,6 +574,108 @@ class LocalPaperQA:
 
     def select_evidence(
         self, question: str, papers: list[PaperDocument], chunks: list[PaperChunk]
+    ) -> list[PaperCitation]:
+        representation_citations = self._select_representations(question, papers)
+        if representation_citations:
+            return representation_citations
+        return self._select_chunk_evidence(question, papers, chunks)
+
+    def _select_representations(self, question: str, papers: list[PaperDocument]) -> list[PaperCitation]:
+        query_embedding = self.embed_text(question)
+        if not query_embedding:
+            return []
+
+        paper_by_id = {paper.paper_id: paper for paper in papers}
+        chunk_by_id = {chunk.chunk_id: chunk for paper in papers for chunk in paper.chunks}
+        representations = [
+            item
+            for item in self.corpus_store.list_representations(list(paper_by_id))
+            if item.representation_type in {"quote", "contextual_span", "figure_note"}
+        ]
+        if not representations:
+            return []
+
+        provider_info = self._get_embedding_provider().info
+        embeddings = self.corpus_store.load_embeddings(
+            [item.representation_id for item in representations],
+            provider=provider_info.provider,
+            model=provider_info.model,
+            dimension=provider_info.dimension,
+            profile=provider_info.profile,
+        )
+
+        scored: list[tuple[float, RetrievalRepresentation]] = []
+        for representation in representations:
+            embedding = embeddings.get(representation.representation_id)
+            if not embedding:
+                continue
+            semantic = self._cosine(query_embedding, embedding)
+            lexical = self._lexical_score_text(question, representation.content)
+            scored.append((semantic * 0.7 + lexical * 0.3, representation))
+
+        citations: list[PaperCitation] = []
+        seen: set[tuple[str, str, str]] = set()
+        for score, representation in sorted(scored, key=lambda item: item[0], reverse=True):
+            citation = self._citation_from_representation(representation, paper_by_id, chunk_by_id)
+            if citation is None:
+                continue
+            key = (citation.paper_id, str(citation.page), citation.quote[:160])
+            if key in seen:
+                continue
+            seen.add(key)
+            citation.score = score
+            citations.append(citation)
+            if len(citations) >= get_max_citations():
+                break
+        return citations
+
+    def _citation_from_representation(
+        self,
+        representation: RetrievalRepresentation,
+        paper_by_id: dict[str, PaperDocument],
+        chunk_by_id: dict[str, PaperChunk],
+    ) -> PaperCitation | None:
+        paper = paper_by_id.get(representation.paper_id)
+        if paper is None:
+            return None
+
+        if representation.source_type == "evidence_span":
+            chunk = chunk_by_id.get(representation.source_id)
+            if chunk is None:
+                return None
+            return PaperCitation(
+                paper_id=paper.paper_id,
+                paper_title=paper.title,
+                authors=paper.authors,
+                year=paper.year,
+                venue=paper.venue,
+                doi=paper.doi,
+                page=chunk.page,
+                section=chunk.section,
+                quote=chunk.text,
+                claim=representation.representation_type,
+            )
+
+        if representation.source_type == "visual_evidence":
+            return PaperCitation(
+                paper_id=paper.paper_id,
+                paper_title=paper.title,
+                authors=paper.authors,
+                year=paper.year,
+                venue=paper.venue,
+                doi=paper.doi,
+                page=representation.metadata.get("page"),
+                section=representation.metadata.get("figure_label", "Figure"),
+                quote=representation.content,
+                claim="figure_note",
+            )
+        return None
+
+    def _select_chunk_evidence(
+        self,
+        question: str,
+        papers: list[PaperDocument],
+        chunks: list[PaperChunk],
     ) -> list[PaperCitation]:
         query_embedding = self.embed_text(question)
         for chunk in chunks:
@@ -474,24 +714,16 @@ class LocalPaperQA:
                     score=chunk.score,
                 )
             )
-        return citations[:8]
+        return citations[: get_max_citations()]
 
     def embed_text(self, text: str) -> list[float]:
         text = text.strip()
         if not text:
             return []
-        base_url = get_embedding_url()
-        model = get_embedding_model()
         try:
-            response = httpx.post(
-                f"{base_url.rstrip('/')}/embeddings",
-                json={"model": model, "input": text},
-                timeout=60,
-            )
-            response.raise_for_status()
-            return [float(v) for v in response.json().get("data", [{}])[0].get("embedding", [])]
+            return self._get_embedding_provider().embed_query(text)
         except Exception as exc:
-            logger.debug("Embedding request failed: %s", exc)
+            logger.warning("Embedding request failed: %s", exc)
             return []
 
     def _answer_with_chat(self, question: str, citations: list[PaperCitation]) -> str:
@@ -506,6 +738,13 @@ class LocalPaperQA:
             "If evidence is insufficient, say so.\n\n"
             f"Question: {question}\n\nEvidence:\n{evidence}"
         )
+        if get_chat_provider().strip().lower() in {"openai", "auto"}:
+            try:
+                return self._get_chat_client().complete(prompt, max_output_tokens=900)
+            except Exception as exc:
+                logger.debug("OpenAI chat completion request failed: %s", exc)
+                return ""
+
         base_url = get_chat_url()
         model = get_chat_model()
         try:
@@ -551,6 +790,12 @@ class LocalPaperQA:
             "}\n\n"
             f"Question: {question}\n\nEvidence:\n{evidence}"
         )
+        if get_chat_provider().strip().lower() in {"openai", "auto"}:
+            full_response = self._answer_with_claims_chat(question, citations)
+            if full_response:
+                yield full_response, full_response
+            return
+
         base_url = get_chat_url()
         model = get_chat_model()
         accumulated = ""
@@ -611,6 +856,13 @@ class LocalPaperQA:
             "}\n\n"
             f"Question: {question}\n\nEvidence:\n{evidence}"
         )
+        if get_chat_provider().strip().lower() in {"openai", "auto"}:
+            try:
+                return self._get_chat_client().complete(prompt, max_output_tokens=1100)
+            except Exception as exc:
+                logger.debug("OpenAI structured chat completion request failed: %s", exc)
+                return ""
+
         base_url = get_chat_url()
         model = get_chat_model()
         try:
@@ -839,6 +1091,9 @@ class LocalPaperQA:
         return dot / (norm_a * norm_b) if norm_a and norm_b else 0.0
 
     def _lexical_score(self, question: str, chunk: PaperChunk) -> float:
+        return self._lexical_score_text(question, chunk.text)
+
+    def _lexical_score_text(self, question: str, text: str) -> float:
         q = set(re.findall(r"[a-z0-9]+", question.lower()))
-        t = set(re.findall(r"[a-z0-9]+", chunk.text.lower()))
+        t = set(re.findall(r"[a-z0-9]+", text.lower()))
         return len(q & t) / len(q | t) if q and t else 0.0

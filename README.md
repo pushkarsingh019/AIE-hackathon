@@ -6,8 +6,8 @@ Local-first scientific PDF question answering with a terminal UI, citation-groun
 
 - **Docling-powered PDF parsing** with PyPDF fallback
 - **Smart chunking** with section detection, hyphenation cleanup, and overlap
-- **Hybrid retrieval** combining embedding similarity (70%) and lexical overlap (30%)
-- **Persistent vector store** using SQLite + sqlite-vec for efficient retrieval
+- **Hybrid retrieval** combining hosted embedding similarity with lexical overlap
+- **Persistent Extracted Corpus** using SQLite for spans, retrieval representations, and embeddings
 - **Terminal UI** with click-through citations, evidence inspection, and paper lineage
 - **FastAPI API** for programmatic access
 - **Config file** support via `local_paper_qa.toml` or environment variables
@@ -20,15 +20,17 @@ Local-first scientific PDF question answering with a terminal UI, citation-groun
 ## Requirements
 
 - Python 3.11+ recommended.
-- A local OpenAI-compatible chat server.
-- A local OpenAI-compatible embedding server.
+- An OpenAI API key for default chat and retrieval embeddings (`OPENAI_API_KEY`).
+- Optional: a local OpenAI-compatible chat server if you switch chat away from OpenAI.
+- Optional: a Gemini API key if you switch retrieval embeddings back to Gemini.
 - Optional: an Exa API key for lineage lookup.
 
-Default local endpoints:
+Default model configuration:
 
-- Chat: `http://100.67.104.58:8001/v1`
-- Embeddings: `http://100.67.104.58:8003/v1`
-- Model alias: `unsloth/Qwen3.6`
+- Chat provider: OpenAI Responses API
+- Chat model: `gpt-5.5`
+- Chat reasoning effort: `medium`
+- Embeddings: `text-embedding-3-large`
 
 ## Setup
 
@@ -37,25 +39,59 @@ pip install -r requirements.txt
 cp local_paper_qa.toml .  # Optional: edit config
 ```
 
-Override endpoints via environment:
+Override chat and embedding settings via environment:
 
 ```bash
 export LOCAL_PAPER_QA_CHAT_URL=http://host:port/v1
-export LOCAL_PAPER_QA_EMBEDDING_URL=http://host:port/v1
 export LOCAL_PAPER_QA_CHAT_MODEL=your-model
+export OPENAI_API_KEY=your-key
 ```
 
 Or create `local_paper_qa.toml`:
 
 ```toml
-chat_url = "http://100.67.104.58:8001/v1"
-embedding_url = "http://100.67.104.58:8003/v1"
-chat_model = "unsloth/Qwen3.6"
-embedding_model = "unsloth/Qwen3.6"
+chat_provider = "openai"
+chat_url = "http://100.67.104.58:8002/v1"
+chat_model = "gpt-5.5"
+openai_chat_model = "gpt-5.5"
+openai_reasoning_effort = "medium"
+openai_chat_max_output_tokens = 1200
+embedding_provider = "openai"
+embedding_model = "text-embedding-3-large"
+embedding_dimension = 3072
+indexing_profile = "fast"  # Cheaper smoke runs; use "deep" for richer indexing.
+multimodal_provider = "openai"
+multimodal_model = "gpt-5.5"
+openai_vision_detail = "low"
+openai_vision_max_output_tokens = 500
 papers_dir = "papers"
 chunk_size = 150
 reranking_enabled = true
 ```
+
+To use Gemini embeddings instead, set `embedding_provider = "gemini"`,
+`embedding_model = "gemini-embedding-2"`, `embedding_dimension = 1536`, and provide
+`GEMINI_API_KEY`.
+
+To use a local OpenAI-compatible chat server instead:
+
+```toml
+chat_provider = "local"
+chat_url = "http://100.67.104.58:8002/v1"
+chat_model = "Gemma4 26B"
+```
+
+Figure/page image indexing is opt-in because it can spend vision tokens:
+
+```toml
+indexing_profile = "deep_figures"
+figure_indexing = "auto"
+multimodal_provider = "openai"
+multimodal_model = "gpt-5.5"
+openai_vision_detail = "low"
+```
+
+`fast` and `deep` remain text-only indexing profiles.
 
 ## CLI
 
@@ -98,7 +134,7 @@ You are in a folder that contains research PDF files. Your goal is to set up loc
 Steps:
 1. Ensure Python dependencies are installed: pip install -r requirements.txt
 2. Run the deterministic setup bot to generate local_paper_qa.toml: python setup_bot.py
-   - Provide LOCAL_PAPER_QA_CHAT_URL and LOCAL_PAPER_QA_EMBEDDING_URL (and optional model names) when prompted.
+   - Provide LOCAL_PAPER_QA_CHAT_URL and optionally GEMINI_API_KEY when prompted.
    - Confirm overwrite if the config already exists.
 3. Verify there are PDF files (*.pdf) in this folder.
 4. Build/load the index and answer once:
@@ -143,13 +179,19 @@ On GitHub (and in general), do not commit generated artifacts. This repo keeps r
 These are ignored by git and regenerated as needed.
 
 ### Required environment variables
-- Set your local OpenAI-compatible servers for chat and embeddings:
-  - `LOCAL_PAPER_QA_CHAT_URL`
-  - `LOCAL_PAPER_QA_EMBEDDING_URL`
-  - `LOCAL_PAPER_QA_CHAT_MODEL` (optional if defaults are OK)
-  - `LOCAL_PAPER_QA_EMBEDDING_MODEL` (optional if defaults are OK)
+- Set OpenAI access:
+  - `OPENAI_API_KEY`
+- Configure OpenAI chat if needed:
+  - `LOCAL_PAPER_QA_CHAT_PROVIDER` (optional; defaults to `openai`)
+  - `LOCAL_PAPER_QA_CHAT_MODEL` (optional; defaults to `gpt-5.5`)
+  - `LOCAL_PAPER_QA_OPENAI_REASONING_EFFORT` (optional; defaults to `medium`)
+- Configure OpenAI embeddings if needed:
+  - `LOCAL_PAPER_QA_EMBEDDING_PROVIDER` (optional; defaults to `openai`)
+  - `LOCAL_PAPER_QA_EMBEDDING_MODEL` (optional; defaults to `text-embedding-3-large`)
+  - `LOCAL_PAPER_QA_OPENAI_EMBEDDING_MODEL` (optional; fallback model when `embedding_model` is not OpenAI)
 
 ### Optional keys
+- `GEMINI_API_KEY` enables Gemini embeddings if configured.
 - `EXA_API_KEY` enables legacy Exa-based lineage lookups.
 
 Endpoints:
@@ -161,6 +203,21 @@ Endpoints:
 - `POST /ask`
 
 ## Benchmarks
+
+### Evidence Retrieval Benchmark
+
+```bash
+python scripts/benchmark_retrieval_gold.py --run-name openai-fast
+python scripts/benchmark_retrieval_gold.py --cached-only --max-cases 3 --run-name smoke
+```
+
+Edit `benchmark_cases.json` with expected papers and evidence terms. Results are saved to `benchmark_outputs/retrieval_gold_benchmark*.json`. This is the benchmark to use first when comparing embedding and retrieval setups.
+
+Cost controls:
+
+- By default this benchmark evaluates retrieval only; it does not synthesize answers unless `--include-answer` is passed.
+- Use `--cached-only` to fail instead of making fresh embedding calls.
+- Use `--max-cases N` for low-credit smoke runs.
 
 ### QA Quality Benchmark
 

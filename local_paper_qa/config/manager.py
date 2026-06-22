@@ -25,10 +25,11 @@ class SystemConfig:
     papers_dir: str = "papers"
     index_dir: str = ".research_index"
     lineage_dir: str = ".enhanced_lineage"
-    chat_url: str = "http://100.67.104.58:8001/v1"
+    chat_provider: str = "openai"
+    chat_url: str = "http://100.67.104.58:8002/v1"
     embedding_url: str = "http://100.67.104.58:8003/v1"
-    chat_model: str = "unsloth/Qwen3.6"
-    embedding_model: str = "unsloth/Qwen3.6"
+    chat_model: str = "gpt-5.5"
+    embedding_model: str = "text-embedding-3-large"
     max_chunk_size: int = 2000
     max_chunks_per_page: int = 10
 
@@ -111,10 +112,11 @@ class ConfigManager:
             papers_dir=system_data.get('papers_dir') or os.environ.get("PAPERS_DIR", "papers"),
             index_dir=system_data.get('index_dir') or os.environ.get("INDEX_DIR", ".research_index"),
             lineage_dir=system_data.get('lineage_dir') or os.environ.get("LINEAGE_DIR", ".enhanced_lineage"),
-            chat_url=system_data.get('chat_url') or os.environ.get("LOCAL_PAPER_QA_CHAT_URL", "http://100.67.104.58:8001/v1"),
+            chat_provider=system_data.get('chat_provider') or os.environ.get("LOCAL_PAPER_QA_CHAT_PROVIDER", "openai"),
+            chat_url=system_data.get('chat_url') or os.environ.get("LOCAL_PAPER_QA_CHAT_URL", "http://100.67.104.58:8002/v1"),
             embedding_url=system_data.get('embedding_url') or os.environ.get("LOCAL_PAPER_QA_EMBEDDING_URL", "http://100.67.104.58:8003/v1"),
-            chat_model=system_data.get('chat_model') or os.environ.get("LOCAL_PAPER_QA_CHAT_MODEL", "unsloth/Qwen3.6"),
-            embedding_model=system_data.get('embedding_model') or os.environ.get("LOCAL_PAPER_QA_EMBEDDING_MODEL", "unsloth/Qwen3.6"),
+            chat_model=system_data.get('chat_model') or os.environ.get("LOCAL_PAPER_QA_CHAT_MODEL", "gpt-5.5"),
+            embedding_model=system_data.get('embedding_model') or os.environ.get("LOCAL_PAPER_QA_EMBEDDING_MODEL", "text-embedding-3-large"),
             max_chunk_size=system_data.get('max_chunk_size') or int(os.environ.get("MAX_CHUNK_SIZE", "2000")),
             max_chunks_per_page=system_data.get('max_chunks_per_page') or int(os.environ.get("MAX_CHUNKS_PER_PAGE", "10"))
         )
@@ -188,10 +190,11 @@ class ConfigManager:
                 "papers_dir": "papers",
                 "index_dir": ".research_index",
                 "lineage_dir": ".enhanced_lineage",
-                "chat_url": "http://100.67.104.58:8001/v1",
+                "chat_provider": "openai",
+                "chat_url": "http://100.67.104.58:8002/v1",
                 "embedding_url": "http://100.67.104.58:8003/v1",
-                "chat_model": "unsloth/Qwen3.6",
-                "embedding_model": "unsloth/Qwen3.6",
+                "chat_model": "gpt-5.5",
+                "embedding_model": "text-embedding-3-large",
                 "max_chunk_size": 2000,
                 "max_chunks_per_page": 10
             },

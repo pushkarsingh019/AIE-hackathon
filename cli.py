@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 
-from local_paper_qa.service import LocalPaperQA
+from local_paper_qa.service import IndexingError, LocalPaperQA
 
 
 def main() -> None:
@@ -16,7 +16,11 @@ def main() -> None:
 
     qa = LocalPaperQA(args.papers_dir)
     if args.reindex:
-        papers = qa.ensure_index(force=True)
+        try:
+            papers = qa.ensure_index(force=True)
+        except IndexingError as exc:
+            print(f"Indexing failed: {exc}")
+            return
         print(f"Indexed {len(papers)} papers and {sum(len(p.chunks) for p in papers)} chunks.")
         return
 

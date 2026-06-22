@@ -3,12 +3,25 @@
 # Environment variables take precedence over this file.
 
 # Local LLM endpoints
-chat_url = "http://100.67.104.58:8001/v1"
+chat_provider = "openai"
+chat_url = "http://100.67.104.58:8002/v1"
 embedding_url = "http://100.67.104.58:8003/v1"
 
 # Model names
-chat_model = "unsloth/Qwen3.6"
-embedding_model = "unsloth/Qwen3.6"
+chat_model = "gpt-5.4-nano"
+openai_chat_model = "gpt-5.4-nano"
+openai_reasoning_effort = "medium"
+openai_chat_max_output_tokens = 1200
+embedding_model = "text-embedding-3-large"
+embedding_provider = "openai"
+embedding_dimension = 3072
+embedding_batch_size = 64
+indexing_profile = "deep_figures"
+multimodal_provider = "openai"
+multimodal_model = "gpt-5.5"
+openai_vision_detail = "low"
+openai_vision_max_output_tokens = 500
+figure_indexing_max_candidates = 3
 
 # Papers directory
 papers_dir = "papers"

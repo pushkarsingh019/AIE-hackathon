@@ -27,6 +27,8 @@ Build a TUI-first Literature Review Workbench where a Research Project contains 
 
 Keep the architecture boring. Prefer a few deep modules with small interfaces over many shallow wrappers.
 
+The detailed plan for the quality-first embedding, Retrieval Representation, and figure-indexing workflow lives in `docs/embedding-indexing-plan.md`.
+
 ### Proposed Modules
 
 `local_paper_qa/domain.py`

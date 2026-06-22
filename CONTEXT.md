@@ -16,6 +16,14 @@ _Avoid_: PDF folder, papers directory, document dump
 The persisted, searchable representation of a Literature Corpus, preserving enough Paper structure to support Evidence Spans.
 _Avoid_: Index, vector store, chunk database
 
+**Retrieval Representation**:
+A derived search-facing view of corpus content used to find Candidate Evidence. Retrieval Representations may be broad or narrow, but Evidence Spans remain the inspectable citation unit.
+_Avoid_: Embedding, vector, chunk
+
+**Retrieval Note**:
+A model-derived, non-authoritative description of Paper content created to improve discovery of Candidate Evidence. Retrieval Notes must resolve back to Evidence Spans before they can ground a Finding.
+_Avoid_: Summary, evidence, extracted fact
+
 **Extraction Quality**:
 How reliably a Paper's source material has been converted into searchable, inspectable corpus content.
 _Avoid_: OCR status, parser score
@@ -59,6 +67,18 @@ _Avoid_: Evidence check, claim search
 **Evidence Span**:
 The smallest useful passage, table entry, figure reference, or result excerpt from a Paper that supports, contradicts, or contextualizes a Finding and can be inspected by the user. At minimum, it identifies the Paper, page, section, and exact quoted content.
 _Avoid_: Citation, source, chunk
+
+**Visual Evidence**:
+An inspectable Evidence Span derived from a Paper's figures, tables, diagrams, page regions, or captions when the relevant support is not captured by ordinary text extraction.
+_Avoid_: Image result, screenshot, multimodal chunk
+
+**Visual Artifact**:
+A local, inspectable image artifact derived from a Paper, such as a rendered page or figure crop, stored so the user can directly review Visual Evidence.
+_Avoid_: Cache image, temp file, screenshot
+
+**Figure Note**:
+A model-derived Retrieval Note describing what a Paper figure appears to show, attached to a figure or page reference. A Figure Note helps discovery, but the inspectable figure or its caption remains the cited Visual Evidence.
+_Avoid_: Figure evidence, vision summary, image citation
 
 **Evidence Relation**:
 The role an Evidence Span plays with respect to a Finding, explaining why that evidence is attached to the answer.

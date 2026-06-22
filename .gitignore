@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 .DS_Store
 .env
+random/
 papers/.research_index/
 papers/.enhanced_lineage/
 papers/citation_graph.json

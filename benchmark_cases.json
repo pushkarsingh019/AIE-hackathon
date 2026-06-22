@@ -1,0 +1,42 @@
+[
+  {
+    "id": "example_paper_question",
+    "question_type": "paper",
+    "question": "What is the main result reported by this paper?",
+    "expected_papers": [],
+    "expected_evidence": [
+      {
+        "paper": "",
+        "page": null,
+        "must_contain": []
+      }
+    ],
+    "expected_answer_terms": [],
+    "notes": "Fill expected_papers with paper id or title substrings. Fill must_contain with terms that should appear in the retrieved quote."
+  },
+  {
+    "id": "example_finding_search",
+    "question_type": "finding_search",
+    "question": "Does any paper show a similar result pattern to this finding?",
+    "expected_papers": [],
+    "expected_evidence": [
+      {
+        "paper": "",
+        "page": null,
+        "must_contain": []
+      }
+    ],
+    "expected_answer_terms": [],
+    "notes": "Use this shape for support/oppose/similar finding searches across the corpus."
+  },
+  {
+    "id": "example_no_evidence",
+    "question_type": "no_evidence",
+    "question": "Does the corpus contain evidence for a deliberately absent finding?",
+    "expected_papers": [],
+    "expected_evidence": [],
+    "expected_answer_terms": [],
+    "expect_no_evidence": true,
+    "notes": "This case should pass only when retrieval does not return plausible evidence."
+  }
+]
